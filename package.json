@@ -1,0 +1,45 @@
+{
+  "name": "opencode-workspaces",
+  "version": "0.1.0",
+  "description": "OpenCode v2 workspace, Git worktree, and session tree in the right-hand pane",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tui": "./src/tui.tsx",
+    "./rpc": "./src/rpc.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@opencode/plugin": "latest"
+  },
+  "peerDependencies": {
+    "@opencode/theme": "*",
+    "@opentui/core": "*",
+    "@opentui/solid": "*",
+    "effect": "^4.0.0",
+    "solid-js": ">=1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/theme": {
+      "optional": true
+    },
+    "effect": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@opencode/theme": "^2.2.5",
+    "@opentui/core": "latest",
+    "@opentui/solid": "latest",
+    "@types/bun": "latest",
+    "effect": "^4.0.0",
+    "solid-js": "^1.9.5",
+    "typescript": "^5.8.2"
+  }
+}
