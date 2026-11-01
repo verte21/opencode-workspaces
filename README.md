@@ -2,6 +2,8 @@
 
 An **OpenCode v2** plugin (`@opencode/plugin` + `@opencode/plugin/tui` + `@opencode/plugin/rpc`) that adds a live, 2-level **Project → Git Worktree → Session** workspace tree to the lower half of the right sidebar, an interactive split panel, and a searchable switcher dialog.
 
+![OpenCode Workspaces right-sidebar worktree and session tree](./assets/workspaces-overview.png)
+
 ## Features
 
 - **Always-Visible Right Sidebar Lower Half (`before: "sidebar.footer"`)**
@@ -25,9 +27,19 @@ An **OpenCode v2** plugin (`@opencode/plugin` + `@opencode/plugin/tui` + `@openc
   - `/ws all` — Toggle showing all Git repositories vs. current repository only.
   - `/ws refresh` — Force-sync worktrees and Git status.
 
+![Repository Worktrees switcher dialog](./assets/workspaces-switcher.png)
+
 ## Installation
 
-### 1. Register the plugin in `~/.config/opencode/opencode.json`
+### 1. Clone and install dependencies
+
+```bash
+git clone https://github.com/verte21/opencode-workspaces.git
+cd opencode-workspaces
+bun install
+```
+
+### 2. Register the plugin in `~/.config/opencode/opencode.json`
 
 > **Important:** Registering in `opencode.json` loads **both** the server plugin (`src/index.ts`, which powers `↑ahead`/`↓behind` counts and `git worktree` discovery via `WorkspacesRpc`) and the TUI plugin (`src/tui.tsx`). Registering only in `cli.json` loads the TUI in fallback mode without `↑`/`↓` tracking counts.
 
@@ -60,7 +72,7 @@ Or with custom options:
 }
 ```
 
-### 2. Ensure the right sidebar is enabled in `~/.config/opencode/cli.json`
+### 3. Ensure the right sidebar is enabled in `~/.config/opencode/cli.json`
 
 Make sure `session.sidebar` is set to `"auto"` (or `"show"`), not `"hide"`:
 
