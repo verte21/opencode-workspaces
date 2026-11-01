@@ -1,13 +1,16 @@
 import { Rpc } from "@opencode/plugin/rpc"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
-import type { GitSummary } from "./model.js"
+import type { GitSummary, GitWorktreeEntry } from "./model.js"
 
 export interface InspectLocationsInput {
   readonly directories: readonly string[]
+  /** Optional canonical repository roots; when provided, `git worktree list` runs only once per root. */
+  readonly rootDirectories?: readonly string[]
 }
 
 export interface InspectLocationsOutput {
   readonly summaries: Readonly<Record<string, GitSummary>>
+  readonly worktreesByRoot: Readonly<Record<string, readonly GitWorktreeEntry[]>>
 }
 
 export type WorkspacesUpdatedEvent = {
@@ -41,26 +44,53 @@ const InspectLocationsInputSchema = standardSchema<InspectLocationsInput>((val) 
   const raw = (val as { directories?: unknown }).directories
   if (!Array.isArray(raw)) return undefined
   const directories = raw.filter((item): item is string => typeof item === "string")
-  return { directories }
-}, "Expected { directories: string[] }")
+  const rawRoots = (val as { rootDirectories?: unknown }).rootDirectories
+  const rootDirectories = Array.isArray(rawRoots)
+    ? rawRoots.filter((item): item is string => typeof item === "string")
+    : undefined
+  return rootDirectories ? { directories, rootDirectories } : { directories }
+}, "Expected { directories: string[], rootDirectories?: string[] }")
 
 const InspectLocationsOutputSchema = standardSchema<InspectLocationsOutput>((val) => {
   if (!val || typeof val !== "object") return undefined
-  const raw = (val as { summaries?: unknown }).summaries
-  if (!raw || typeof raw !== "object") return undefined
+  const raw = val as {
+    summaries?: unknown
+    worktreesByRoot?: unknown
+  }
+  if (!raw.summaries || typeof raw.summaries !== "object") return undefined
+
   const summaries: Record<string, GitSummary> = {}
-  for (const [dir, entry] of Object.entries(raw as Record<string, unknown>)) {
+  for (const [dir, entry] of Object.entries(raw.summaries as Record<string, unknown>)) {
     if (!entry || typeof entry !== "object") continue
     const obj = entry as Record<string, unknown>
     summaries[dir] = {
       branch: typeof obj.branch === "string" ? obj.branch : undefined,
+      head: typeof obj.head === "string" ? obj.head : undefined,
       dirtyCount: typeof obj.dirtyCount === "number" ? obj.dirtyCount : 0,
       ahead: typeof obj.ahead === "number" ? obj.ahead : 0,
       behind: typeof obj.behind === "number" ? obj.behind : 0,
     }
   }
-  return { summaries }
-}, "Expected { summaries: Record<string, GitSummary> }")
+
+  const worktreesByRoot: Record<string, GitWorktreeEntry[]> = {}
+  if (raw.worktreesByRoot && typeof raw.worktreesByRoot === "object") {
+    for (const [rootDir, list] of Object.entries(
+      raw.worktreesByRoot as Record<string, unknown>,
+    )) {
+      if (!Array.isArray(list)) continue
+      worktreesByRoot[rootDir] = list
+        .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+        .filter((item) => typeof item.directory === "string")
+        .map((item) => ({
+          directory: item.directory as string,
+          branch: typeof item.branch === "string" ? item.branch : undefined,
+          head: typeof item.head === "string" ? item.head : undefined,
+        }))
+    }
+  }
+
+  return { summaries, worktreesByRoot }
+}, "Expected { summaries, worktreesByRoot }")
 
 const WorkspacesUpdatedEventSchema = standardSchema<WorkspacesUpdatedEvent>((val) => {
   if (!val || typeof val !== "object") return undefined

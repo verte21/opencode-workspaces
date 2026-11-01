@@ -3,9 +3,15 @@ import {
   DEFAULT_PREFERENCES,
   aggregateStatus,
   buildWorkspaceTree,
+  computeMarqueeScrollX,
   computeSessionStatus,
+  filterWorkspaceTreeForSwitcher,
+  isInvalidWorkspaceRoot,
   matchSessionWorktree,
+  parseEditorCommand,
   parseGitPorcelainBranchStatus,
+  parseGitWorktreePorcelain,
+  resolveWorkspaceNewSessionDirectory,
 } from "../src/model.js"
 import { WorkspacesRpc } from "../src/rpc.js"
 
@@ -27,18 +33,18 @@ describe("parseGitPorcelainBranchStatus", () => {
     })
   })
 
-  test("parses fresh repo with no commits yet", () => {
-    expect(parseGitPorcelainBranchStatus("## No commits yet on main\n?? README.md\n")).toEqual({
+  test("parses fresh repo and detached HEAD cleanly", () => {
+    expect(
+      parseGitPorcelainBranchStatus("## No commits yet on main\n?? README.md\n"),
+    ).toEqual({
       branch: "main",
       ahead: 0,
       behind: 0,
       dirtyCount: 1,
     })
-  })
 
-  test("parses detached HEAD cleanly", () => {
     expect(parseGitPorcelainBranchStatus("## HEAD (no branch)\n")).toEqual({
-      branch: "HEAD",
+      branch: "detached",
       ahead: 0,
       behind: 0,
       dirtyCount: 0,
@@ -46,35 +52,59 @@ describe("parseGitPorcelainBranchStatus", () => {
   })
 })
 
-describe("status computation & precedence", () => {
+describe("parseGitWorktreePorcelain", () => {
+  test("discovers active worktrees and skips bare or prunable entries", () => {
+    const porcelain = [
+      "worktree /code/alpha",
+      "HEAD 1111111111111111111111111111111111111111",
+      "branch refs/heads/main",
+      "",
+      "worktree /code/alpha-wt-feat",
+      "HEAD 2222222222222222222222222222222222222222",
+      "branch refs/heads/feat/login",
+      "",
+      "worktree /code/alpha-wt-stale",
+      "HEAD 3333333333333333333333333333333333333333",
+      "branch refs/heads/old",
+      "prunable gitdir file points to non-existent location",
+      "",
+      "worktree /code/bare.git",
+      "bare",
+      "",
+    ].join("\n")
+
+    expect(parseGitWorktreePorcelain(porcelain)).toEqual([
+      {
+        directory: "/code/alpha",
+        branch: "main",
+        head: "1111111111111111111111111111111111111111",
+      },
+      {
+        directory: "/code/alpha-wt-feat",
+        branch: "feat/login",
+        head: "2222222222222222222222222222222222222222",
+      },
+    ])
+  })
+})
+
+describe("isInvalidWorkspaceRoot", () => {
+  test("rejects root filesystem, home directories, and /tmp", () => {
+    expect(isInvalidWorkspaceRoot("/")).toBe(true)
+    expect(isInvalidWorkspaceRoot("/Users/dev")).toBe(true)
+    expect(isInvalidWorkspaceRoot("/home/alice")).toBe(true)
+    expect(isInvalidWorkspaceRoot("/tmp")).toBe(true)
+    expect(isInvalidWorkspaceRoot("/Users/dev/code/projects/app")).toBe(
+      false,
+    )
+  })
+})
+
+describe("status computation & matchSessionWorktree", () => {
   test("prioritizes permission > form > working > idle", () => {
-    const perm = computeSessionStatus({
-      running: true,
-      permissionsCount: 1,
-      formsCount: 1,
-    })
-    expect(perm).toEqual({ status: "blocked", detail: "permission" })
-
-    const form = computeSessionStatus({
-      running: true,
-      permissionsCount: 0,
-      formsCount: 2,
-    })
-    expect(form).toEqual({ status: "blocked", detail: "form" })
-
-    const working = computeSessionStatus({
-      running: true,
-      permissionsCount: 0,
-      formsCount: 0,
-    })
-    expect(working).toEqual({ status: "working", detail: "running" })
-
-    const idle = computeSessionStatus({
-      running: false,
-      permissionsCount: 0,
-      formsCount: 0,
-    })
-    expect(idle).toEqual({ status: "idle" })
+    expect(
+      computeSessionStatus({ running: true, permissionsCount: 1, formsCount: 1 }),
+    ).toEqual({ status: "blocked", detail: "permission" })
 
     expect(
       aggregateStatus([
@@ -84,188 +114,471 @@ describe("status computation & precedence", () => {
       ]),
     ).toEqual({ status: "blocked", detail: "form" })
   })
-})
 
-describe("matchSessionWorktree", () => {
-  test("picks longest matching worktree prefix and preserves external worktree paths", () => {
-    const canonical = "/Users/dev/repo"
-    const known = ["/Users/dev/repo", "/Users/dev/repo/.worktrees/feat-auth"]
-
-    expect(
-      matchSessionWorktree("/Users/dev/repo/packages/api", known, canonical),
-    ).toBe("/Users/dev/repo")
-
+  test("picks longest matching worktree prefix", () => {
+    const canonical = "/code/repo"
+    const known = ["/code/repo", "/code/repo/.worktrees/feat-auth"]
+    expect(matchSessionWorktree("/code/repo/packages/api", known, canonical)).toBe(
+      "/code/repo",
+    )
     expect(
       matchSessionWorktree(
-        "/Users/dev/repo/.worktrees/feat-auth/packages/api",
+        "/code/repo/.worktrees/feat-auth/packages/api",
         known,
         canonical,
       ),
-    ).toBe("/Users/dev/repo/.worktrees/feat-auth")
-
-    expect(
-      matchSessionWorktree("/Users/dev/repo-wt-external", known, canonical),
-    ).toBe("/Users/dev/repo-wt-external")
+    ).toBe("/code/repo/.worktrees/feat-auth")
   })
 })
 
 describe("buildWorkspaceTree", () => {
-  const projects = [
-    {
-      id: "proj-alpha",
-      canonical: "/code/alpha",
-      name: "alpha",
-      time: { created: 100, updated: 500, active: 500 },
-    },
-    {
-      id: "proj-beta",
-      canonical: "/code/beta",
-      name: "beta",
-      time: { created: 100, updated: 1000, active: 1000 },
-    },
-    {
-      id: "proj-gamma",
-      canonical: "/code/gamma",
-      name: "gamma",
-      time: { created: 100, updated: 200, active: 200 },
-    },
-  ]
-
-  test("preserves pinned order, groups worktrees & root sessions, and assigns quick slots 1..9", () => {
+  test("excludes non-git / home / root folders and idle single-branch repos by default", () => {
     const tree = buildWorkspaceTree({
-      projects,
-      sessions: [
+      projects: [
         {
-          id: "sess-1",
-          projectID: "proj-alpha",
-          title: "Implement auth",
-          time: { created: 100, updated: 600 },
-          location: { directory: "/code/alpha-wt-auth" },
+          id: "global-root",
+          canonical: "/",
+          time: { created: 1, updated: 9999 },
         },
         {
-          id: "sess-subagent",
-          parentID: "sess-1",
-          projectID: "proj-alpha",
-          title: "Subagent task",
-          time: { created: 110, updated: 610 },
-          location: { directory: "/code/alpha-wt-auth" },
+          id: "home-dir",
+          canonical: "/Users/dev",
+          time: { created: 1, updated: 9998 },
         },
         {
-          id: "sess-archived",
-          projectID: "proj-alpha",
-          title: "Old session",
-          time: { created: 50, updated: 90, archived: 95 },
-          location: { directory: "/code/alpha" },
+          id: "non-git-parent",
+          canonical: "/Users/dev/code/projects",
+          time: { created: 1, updated: 9997 },
         },
         {
-          id: "sess-2",
-          projectID: "proj-beta",
-          title: "Fix bug",
-          time: { created: 200, updated: 900 },
-          location: { directory: "/code/beta/packages/ui" },
+          id: "dusty-vault",
+          canonical: "/Users/dev/notes",
+          vcs: "git",
+          time: { created: 1, updated: 9996 },
+        },
+        {
+          id: "multi-wt-repo",
+          canonical: "/Users/dev/code/projects/terminal",
+          vcs: "git",
+          time: { created: 1, updated: 500 },
         },
       ],
-      sessionRuntime: {
-        "sess-1": { running: true, permissionsCount: 0, formsCount: 0 },
-        "sess-2": { running: false, permissionsCount: 1, formsCount: 0 },
-      },
-      worktreesByProject: {
-        "proj-alpha": ["/code/alpha-wt-auth"],
+      sessions: [],
+      sessionRuntime: {},
+      worktreesByProject: {},
+      gitWorktreesByRoot: {
+        "/Users/dev/code/projects/terminal": [
+          {
+            directory: "/Users/dev/code/projects/terminal",
+            branch: "main",
+          },
+          {
+            directory: "/Users/dev/code/projects/terminal-profile",
+            branch: "user-profile-page",
+          },
+        ],
       },
       gitByDirectory: {
-        "/code/alpha": { branch: "main", dirtyCount: 0, ahead: 0, behind: 0 },
-        "/code/alpha-wt-auth": {
-          branch: "feat/auth",
-          dirtyCount: 4,
-          ahead: 1,
+        "/Users/dev/notes": {
+          branch: "main",
+          dirtyCount: 94,
+          ahead: 0,
           behind: 0,
         },
-        "/code/beta": { branch: "main", dirtyCount: 2, ahead: 0, behind: 0 },
+        "/Users/dev/code/projects/terminal": {
+          branch: "main",
+          dirtyCount: 0,
+          ahead: 0,
+          behind: 0,
+        },
+        "/Users/dev/code/projects/terminal-profile": {
+          branch: "user-profile-page",
+          dirtyCount: 3,
+          ahead: 0,
+          behind: 0,
+        },
       },
-      prefs: {
-        ...DEFAULT_PREFERENCES,
-        pinnedProjects: ["/code/alpha"],
-      },
-      currentSessionID: "sess-1",
+      prefs: DEFAULT_PREFERENCES,
+      currentDirectory: "/Users/dev/code/projects",
     })
 
-    // Pinned alpha stays ahead of newer unpinned beta
-    expect(tree.projects.map((p) => p.id)).toEqual([
-      "proj-alpha",
-      "proj-beta",
-      "proj-gamma",
+    // Only `terminal` (which actually has 2 Git worktrees) appears!
+    // `/`, `/Users/dev`, non-git `projects`, and idle single-branch `notes` are all excluded!
+    expect(tree.projects.map((p) => p.id)).toEqual(["multi-wt-repo"])
+    expect(tree.projects[0]!.worktrees.map((w) => w.label)).toEqual([
+      "main",
+      "user-profile-page",
     ])
-
-    const alpha = tree.projects[0]!
-    expect(alpha.pinned).toBe(true)
-    expect(alpha.isCurrent).toBe(true)
-    expect(alpha.totalSessions).toBe(1) // excludes subagent & archived
-    expect(alpha.status).toBe("working")
-    expect(alpha.worktrees.map((w) => w.directory)).toEqual([
-      "/code/alpha",
-      "/code/alpha-wt-auth",
-    ])
-
-    // Subfolder session in beta grouped under canonical /code/beta
-    const beta = tree.projects[1]!
-    expect(beta.status).toBe("blocked")
-    expect(beta.worktrees).toHaveLength(1)
-    expect(beta.worktrees[0]!.sessions[0]!.id).toBe("sess-2")
-
-    // Quick slots 1..4 map deterministically to visible worktrees
-    expect(tree.quickSlots.get(1)?.directory).toBe("/code/alpha")
-    expect(tree.quickSlots.get(2)?.directory).toBe("/code/alpha-wt-auth")
-    expect(tree.quickSlots.get(3)?.directory).toBe("/code/beta")
-    expect(tree.quickSlots.get(4)?.directory).toBe("/code/gamma")
-
-    expect(tree.summary).toEqual({
-      totalProjects: 3,
-      totalWorktrees: 4,
-      workingSessions: 1,
-      blockedSessions: 1,
-    })
   })
 
-  test("hides unpinned idle projects when showIdleProjects is false while keeping active ones", () => {
+  test("includes current Git repo even with a single checkout and never labels it 'root'", () => {
     const tree = buildWorkspaceTree({
-      projects,
-      sessions: [
+      projects: [
         {
-          id: "sess-beta",
-          projectID: "proj-beta",
-          title: "Running build",
-          time: { created: 100, updated: 900 },
-          location: { directory: "/code/beta" },
+          id: "current-repo",
+          canonical: "/code/opencode-workspaces",
+          vcs: "git",
+          time: { created: 1, updated: 500 },
         },
       ],
-      sessionRuntime: {
-        "sess-beta": { running: true, permissionsCount: 0, formsCount: 0 },
-      },
+      sessions: [],
+      sessionRuntime: {},
       worktreesByProject: {},
-      gitByDirectory: {},
-      prefs: {
-        ...DEFAULT_PREFERENCES,
-        pinnedProjects: ["/code/alpha"],
-        showIdleProjects: false,
+      gitByDirectory: {
+        "/code/opencode-workspaces": {
+          branch: "main",
+          dirtyCount: 0,
+          ahead: 0,
+          behind: 0,
+        },
       },
+      prefs: DEFAULT_PREFERENCES,
+      currentDirectory: "/code/opencode-workspaces",
     })
 
-    // alpha (pinned) + beta (working) remain; idle unpinned gamma is hidden
-    expect(tree.projects.map((p) => p.id)).toEqual(["proj-alpha", "proj-beta"])
+    expect(tree.projects).toHaveLength(1)
+    expect(tree.projects[0]!.worktrees[0]!.label).toBe("main")
+    expect(tree.projects[0]!.worktrees[0]!.isCurrent).toBe(true)
+  })
+
+  test("currentProjectOnly strictly shows only the active repository and ignores other multi-worktree or pinned repos", () => {
+    const tree = buildWorkspaceTree({
+      projects: [
+        {
+          id: "opencode-workspaces",
+          canonical: "/code/opencode-workspaces",
+          vcs: "git",
+          time: { created: 1, updated: 500 },
+        },
+        {
+          id: "opencode-setup",
+          canonical: "/code/opencode-setup",
+          vcs: "git",
+          time: { created: 1, updated: 900 },
+        },
+      ],
+      sessions: [
+        {
+          id: "sess-active",
+          projectID: "opencode-workspaces",
+          title: "Testing sidebar",
+          time: { created: 10, updated: 20 },
+          location: { directory: "/code/opencode-workspaces/test-workspaces/workspace-1" },
+        },
+        {
+          id: "sess-deleted-wt",
+          projectID: "opencode-workspaces",
+          time: { created: 1, updated: 5 },
+          location: { directory: "/Users/dev/.local/share/opencode/worktree/6d16733/deleted-wt" },
+        },
+      ],
+      sessionRuntime: {},
+      worktreesByProject: {
+        "opencode-workspaces": [
+          "/code/opencode-workspaces/test-workspaces/workspace-1",
+          "/code/opencode-workspaces/test-workspaces/workspace-2",
+        ],
+        "opencode-setup": [
+          "/code/opencode-setup-wt1",
+          "/code/opencode-setup-wt2",
+        ],
+      },
+      gitByDirectory: {
+        "/code/opencode-workspaces": { branch: "main", dirtyCount: 1, ahead: 0, behind: 0 },
+        "/code/opencode-workspaces/test-workspaces/workspace-1": {
+          branch: "test/workspace-1",
+          dirtyCount: 0,
+          ahead: 0,
+          behind: 0,
+        },
+        "/code/opencode-workspaces/test-workspaces/workspace-2": {
+          branch: "test/workspace-2",
+          dirtyCount: 0,
+          ahead: 0,
+          behind: 0,
+        },
+        "/code/opencode-setup": { branch: "main", dirtyCount: 0, ahead: 0, behind: 0 },
+      },
+      prefs: {
+        ...DEFAULT_PREFERENCES,
+        pinnedProjects: ["/code/opencode-setup"],
+        collapsedProjects: ["opencode-workspaces"],
+      },
+      currentSessionID: "sess-active",
+      currentDirectory: "/code/opencode-workspaces/test-workspaces/workspace-1",
+      currentProjectOnly: true,
+    })
+
+    // Strictly only `opencode-workspaces` (and forced uncollapsed), excluding `opencode-setup` and deleted ghost worktree
+    expect(tree.projects.map((p) => p.id)).toEqual(["opencode-workspaces"])
+    expect(tree.projects[0]!.collapsed).toBe(false)
+    expect(tree.projects[0]!.worktrees.map((w) => w.label)).toEqual([
+      "main",
+      "test/workspace-1",
+      "test/workspace-2",
+    ])
+    expect(tree.projects[0]!.worktrees[1]!.isCurrent).toBe(true)
   })
 })
 
 describe("WorkspacesRpc schema validation", () => {
   test("validates input and output via StandardSchemaV1", () => {
-    const inputSchema = WorkspacesRpc.methods.inspectLocations.input
-    const valid = inputSchema["~standard"].validate({
-      directories: ["/code/alpha", "/code/beta"],
+    const outSchema = WorkspacesRpc.methods.inspectLocations.output
+    const valid = outSchema["~standard"].validate({
+      summaries: {
+        "/code/alpha": { branch: "main", dirtyCount: 1, ahead: 0, behind: 0 },
+      },
+      worktreesByRoot: {
+        "/code/alpha": [{ directory: "/code/alpha", branch: "main" }],
+      },
     })
-    expect("value" in valid && valid.value).toEqual({
-      directories: ["/code/alpha", "/code/beta"],
+    expect("value" in valid && valid.value.worktreesByRoot["/code/alpha"]).toHaveLength(1)
+  })
+})
+
+describe("filterWorkspaceTreeForSwitcher", () => {
+  const sampleTree = buildWorkspaceTree({
+    projects: [
+      {
+        id: "repo-1",
+        canonical: "/code/opencode-workspaces",
+        vcs: "git",
+        time: { created: 1, updated: 500 },
+      },
+    ],
+    sessions: [
+      {
+        id: "sess-main",
+        projectID: "repo-1",
+        title: "Session E4NBPM",
+        time: { created: 10, updated: 30 },
+        location: { directory: "/code/opencode-workspaces" },
+      },
+      {
+        id: "sess-wt1-a",
+        projectID: "repo-1",
+        title: "Session HER0cM",
+        time: { created: 11, updated: 40 },
+        location: { directory: "/code/opencode-workspaces-wt1" },
+      },
+      {
+        id: "sess-wt1-b",
+        projectID: "repo-1",
+        title: "Refactor switcher spacing",
+        time: { created: 12, updated: 50 },
+        location: { directory: "/code/opencode-workspaces-wt1" },
+      },
+    ],
+    sessionRuntime: {},
+    worktreesByProject: {
+      "repo-1": ["/code/opencode-workspaces-wt1"],
+    },
+    gitByDirectory: {
+      "/code/opencode-workspaces": { branch: "main", dirtyCount: 7, ahead: 0, behind: 0 },
+      "/code/opencode-workspaces-wt1": {
+        branch: "test/workspace-1",
+        dirtyCount: 0,
+        ahead: 0,
+        behind: 0,
+      },
+    },
+    prefs: DEFAULT_PREFERENCES,
+    currentSessionID: "sess-main",
+    currentDirectory: "/code/opencode-workspaces",
+  })
+
+  test("preserves full hierarchy and marks last session connectors when query is empty", () => {
+    const res = filterWorkspaceTreeForSwitcher(sampleTree.projects, "")
+    expect(res.projects).toHaveLength(1)
+    expect(res.projects[0]!.worktrees).toHaveLength(2)
+    const sessionRows = res.selectableRows.filter((r) => r.kind === "session")
+    expect(sessionRows.map((r) => [r.session.id, r.isLastSession])).toEqual([
+      ["sess-main", true],
+      ["sess-wt1-b", false],
+      ["sess-wt1-a", true],
+    ])
+  })
+
+  test("matching a branch keeps child sessions and marks worktree as directlyMatched", () => {
+    const res = filterWorkspaceTreeForSwitcher(sampleTree.projects, "workspace-1")
+    expect(res.projects[0]!.worktrees).toHaveLength(1)
+    expect(res.projects[0]!.worktrees[0]!.worktree.label).toBe("test/workspace-1")
+    expect(res.projects[0]!.worktrees[0]!.sessions).toHaveLength(2)
+
+    const firstDirect = res.selectableRows.find((r) => r.directlyMatched)
+    expect(firstDirect?.kind).toBe("worktree")
+    if (firstDirect?.kind === "worktree") {
+      expect(firstDirect.worktree.label).toBe("test/workspace-1")
+    }
+  })
+
+  test("matching a session keeps parent worktree header and marks session as directlyMatched", () => {
+    const res = filterWorkspaceTreeForSwitcher(sampleTree.projects, "HER0cM")
+    expect(res.projects[0]!.worktrees).toHaveLength(1)
+    expect(res.projects[0]!.worktrees[0]!.worktree.label).toBe("test/workspace-1")
+    expect(res.projects[0]!.worktrees[0]!.sessions.map((s) => s.title)).toEqual([
+      "Session HER0cM",
+    ])
+
+    const firstDirect = res.selectableRows.find((r) => r.directlyMatched)
+    expect(firstDirect?.kind).toBe("session")
+    if (firstDirect?.kind === "session") {
+      expect(firstDirect.session.title).toBe("Session HER0cM")
+    }
+  })
+})
+
+describe("resolveWorkspaceNewSessionDirectory", () => {
+  test("prefers explicit worktree > current worktree > active session > selected workspace > launch directory", () => {
+    expect(
+      resolveWorkspaceNewSessionDirectory({
+        explicitWorktreeDirectory:
+          "/Users/dev/opencode-workspaces/test-workspaces/workspace-2/",
+        currentWorktreeDirectory:
+          "/Users/dev/opencode-workspaces/test-workspaces/workspace-1",
+        activeSessionDirectory: "/Users/dev/opencode-workspaces",
+        selectedWorkspaceDirectory: "/Users/dev/opencode-workspaces",
+        launchDirectory: "/Users/dev/opencode-workspaces",
+      }),
+    ).toBe("/Users/dev/opencode-workspaces/test-workspaces/workspace-2")
+
+    expect(
+      resolveWorkspaceNewSessionDirectory({
+        currentWorktreeDirectory:
+          "/Users/dev/opencode-workspaces/test-workspaces/workspace-1/",
+        activeSessionDirectory: "/Users/dev/opencode-workspaces",
+        launchDirectory: "/Users/dev/opencode-workspaces",
+      }),
+    ).toBe("/Users/dev/opencode-workspaces/test-workspaces/workspace-1")
+  })
+
+  test("falls back to remembered selectedWorkspaceDirectory when on Home screen (no active session)", () => {
+    expect(
+      resolveWorkspaceNewSessionDirectory({
+        activeSessionDirectory: undefined,
+        selectedWorkspaceDirectory:
+          "/Users/dev/opencode-workspaces/test-workspaces/workspace-1",
+        launchDirectory: "/Users/dev/opencode-workspaces",
+      }),
+    ).toBe("/Users/dev/opencode-workspaces/test-workspaces/workspace-1")
+  })
+
+  test("skips invalid workspace roots such as / or /tmp", () => {
+    expect(
+      resolveWorkspaceNewSessionDirectory({
+        currentWorktreeDirectory: "/",
+        activeSessionDirectory: "/tmp",
+        selectedWorkspaceDirectory:
+          "/Users/dev/opencode-workspaces/test-workspaces/workspace-1",
+      }),
+    ).toBe("/Users/dev/opencode-workspaces/test-workspaces/workspace-1")
+
+    expect(
+      resolveWorkspaceNewSessionDirectory({
+        currentWorktreeDirectory: "/",
+        launchDirectory: "/tmp",
+      }),
+    ).toBeUndefined()
+  })
+})
+
+describe("computeMarqueeScrollX", () => {
+  test("returns 0 when text fits (maxScrollX <= 0) or during initial start hold", () => {
+    expect(computeMarqueeScrollX(500, 0)).toBe(0)
+    expect(computeMarqueeScrollX(0, 12)).toBe(0)
+    expect(computeMarqueeScrollX(319, 12)).toBe(0)
+  })
+
+  test("smoothly advances from 1 to maxScrollX, holds at the end, and glides back to 0", () => {
+    const opts = {
+      holdStartMs: 300,
+      stepMs: 50,
+      holdEndMs: 500,
+      returnStepMs: 40,
+      betweenCyclesMs: 200,
+    }
+    // maxScrollX = 4 -> intermediateCols = 3 -> forwardGlide = 150ms (300..450)
+    expect(computeMarqueeScrollX(300, 4, opts)).toBe(1)
+    expect(computeMarqueeScrollX(350, 4, opts)).toBe(2)
+    expect(computeMarqueeScrollX(400, 4, opts)).toBe(3)
+    // End hold: 450..950 -> stays at 4 so full suffix is readable
+    expect(computeMarqueeScrollX(450, 4, opts)).toBe(4)
+    expect(computeMarqueeScrollX(949, 4, opts)).toBe(4)
+    // Return glide: 950..1070 -> steps 3, 2, 1
+    expect(computeMarqueeScrollX(950, 4, opts)).toBe(3)
+    expect(computeMarqueeScrollX(990, 4, opts)).toBe(2)
+    expect(computeMarqueeScrollX(1030, 4, opts)).toBe(1)
+    // Between cycles + next cycle start hold -> 0
+    expect(computeMarqueeScrollX(1070, 4, opts)).toBe(0)
+    expect(computeMarqueeScrollX(1269, 4, opts)).toBe(0)
+    // Loops cleanly into next cycle
+    expect(computeMarqueeScrollX(1270 + 300, 4, opts)).toBe(1)
+  })
+})
+
+describe("parseEditorCommand", () => {
+  test("classifies GUI editors, strips blocking --wait/-w flags, and resolves macOS app names", () => {
+    expect(parseEditorCommand("zed")).toEqual({
+      binary: "zed",
+      args: [],
+      kind: "gui",
+      macAppName: "Zed",
     })
 
-    const invalid = inputSchema["~standard"].validate("nope")
-    expect("issues" in invalid && invalid.issues?.length).toBe(1)
+    expect(parseEditorCommand("code --new-window --wait")).toEqual({
+      binary: "code",
+      args: ["--new-window"],
+      kind: "gui",
+      macAppName: "Visual Studio Code",
+    })
+
+    expect(
+      parseEditorCommand(
+        '"/Applications/Cursor.app/Contents/Resources/app/bin/cursor" -w -r',
+      ),
+    ).toEqual({
+      binary: "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+      args: ["-r"],
+      kind: "gui",
+      macAppName: "Cursor",
+    })
+  })
+
+  test("classifies terminal TTY editors and preserves arguments", () => {
+    expect(parseEditorCommand("/opt/homebrew/bin/nvim -u NONE")).toEqual({
+      binary: "/opt/homebrew/bin/nvim",
+      args: ["-u", "NONE"],
+      kind: "terminal",
+      macAppName: undefined,
+    })
+
+    expect(parseEditorCommand("hx")).toEqual({
+      binary: "hx",
+      args: [],
+      kind: "terminal",
+      macAppName: undefined,
+    })
+
+    expect(parseEditorCommand("emacs -nw")).toEqual({
+      binary: "emacs",
+      args: ["-nw"],
+      kind: "terminal",
+      macAppName: undefined,
+    })
+
+    expect(parseEditorCommand("   ")).toBeUndefined()
+  })
+
+  test("WorkspacesRpc accepts optional rootDirectories alongside directories", () => {
+    const validated = WorkspacesRpc.methods.inspectLocations.input[
+      "~standard"
+    ].validate({
+      directories: ["/repo", "/repo/wt-1"],
+      rootDirectories: ["/repo"],
+    })
+    expect("value" in validated && validated.value).toEqual({
+      directories: ["/repo", "/repo/wt-1"],
+      rootDirectories: ["/repo"],
+    })
   })
 })
