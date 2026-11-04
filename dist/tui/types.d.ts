@@ -1,5 +1,5 @@
 import type { Plugin } from "@opencode/plugin/tui";
-import type { AgentStatus, AgentStatusDetail, GitSummary, GitWorktreeEntry } from "../model.js";
+import type { AgentStatus, GitSummary, GitWorktreeEntry } from "../model.js";
 export type ThemeColor = Plugin.Context["theme"]["text"]["base"];
 export declare const PANEL_NAME = "opencode-workspaces.panel";
 export interface SessionPanelSlotInput {
@@ -18,9 +18,13 @@ export interface EphemeralWorkspaceCache {
     gitByDirectory: Record<string, GitSummary>;
     lastSyncedAt: number;
 }
-export declare function worktreeGlyph(status: AgentStatus, isCurrent: boolean): string;
+export declare function worktreeGlyph(isCurrent: boolean): string;
 export declare function statusGlyph(status: AgentStatus, isCurrent: boolean): string;
-export declare function statusLabel(status: AgentStatus, detail?: AgentStatusDetail): string | undefined;
+/**
+ * General workspace-level status indicator shown on worktree rows (folded or unfolded),
+ * distinct from individual session icons (`!` / `●`).
+ */
+export declare function workspaceStatusGlyph(status: AgentStatus): string | undefined;
 export declare function sameStringArray(a: readonly string[], b: readonly string[]): boolean;
 export declare function resolveStatusColor(theme: Plugin.Context["theme"], status: AgentStatus, isCurrent: boolean): ThemeColor;
 interface ColorChannels {

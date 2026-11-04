@@ -3,6 +3,7 @@ import { createComponent as _$createComponent } from "@opentui/solid";
 import { Plugin } from "@opencode/plugin/tui";
 import { Show } from "solid-js";
 import { dirBasename } from "./model.js";
+import { WorkspaceComposerBar } from "./tui/composer-bar.js";
 import { WorkspacesPanel } from "./tui/panel.js";
 import { WorkspacesSidebar } from "./tui/sidebar.js";
 import { createWorkspacesController } from "./tui/state.js";
@@ -104,6 +105,19 @@ export default Plugin.define({
         case "filter":
           await ctrl.toggleShowAllGitProjects();
           return;
+        case "tabs":
+        case "tab":
+          {
+            const arg = restJoined.toLowerCase();
+            if (arg === "scoped" || arg === "worktree" || arg === "wt") {
+              await ctrl.setLeftTabsMode("scoped");
+            } else if (arg === "grouped" || arg === "group" || arg === "all") {
+              await ctrl.setLeftTabsMode("grouped");
+            } else {
+              await ctrl.toggleLeftTabsMode();
+            }
+            return;
+          }
         case "refresh":
         case "sync":
           await ctrl.refreshWorkspacesData({
@@ -141,7 +155,7 @@ export default Plugin.define({
       }, {
         id: "workspaces.switcher",
         title: "Workspaces: Switch Worktree",
-        description: "Search and switch across Git worktrees and sessions (/ws [1-9|open|editor|new|panel|all])",
+        description: "Search and switch across Git worktrees and sessions (/ws [1-9|open|editor|new|panel|tabs|all])",
         group: "Workspaces",
         bind: switcherKey,
         palette: true,
@@ -200,15 +214,34 @@ export default Plugin.define({
           const proj = ctrl.findCurrentProject();
           if (proj) await ctrl.togglePinProject(proj);
         }
+      }, {
+        id: "workspaces.tabs.toggle",
+        title: "Workspaces: Toggle Left Session Tabs Mode",
+        description: "Toggle left session tabs between scoping to active worktree and grouping all open tabs by worktree",
+        group: "Workspaces",
+        palette: true,
+        run: async () => {
+          await ctrl.toggleLeftTabsMode();
+        }
       }, ...quickJumpCommands]
     }));
+    const stopComposerTopSlot = context.ui.slot({
+      prepend: "session.composer.top",
+      render: input => _$createComponent(WorkspaceComposerBar, {
+        ctrl: ctrl,
+        get sessionID() {
+          return input.sessionID;
+        },
+        onOpenSwitcher: () => openWorkspaceSwitcherDialog()
+      })
+    });
     const stopSidebarSlot = context.ui.slot({
       before: "sidebar.footer",
-      render: ({
-        sessionID
-      }) => _$createComponent(WorkspacesSidebar, {
+      render: input => _$createComponent(WorkspacesSidebar, {
         ctrl: ctrl,
-        sessionID: sessionID,
+        get sessionID() {
+          return input.sessionID;
+        },
         onTogglePanel: toggleWorkspacesPanel
       })
     });
@@ -227,6 +260,11 @@ export default Plugin.define({
       })
     });
     return () => {
+      try {
+        stopComposerTopSlot();
+      } catch {
+        // Ignore teardown errors
+      }
       try {
         stopSidebarSlot();
       } catch {

@@ -12,6 +12,7 @@ export interface GitWorktreeEntry {
     readonly branch?: string;
     readonly head?: string;
 }
+export type LeftTabsMode = "scoped" | "grouped";
 export interface WorkspacePreferences {
     pinnedProjects: string[];
     collapsedProjects: string[];
@@ -19,6 +20,8 @@ export interface WorkspacePreferences {
     preferredEditor?: string;
     showAllGitProjects: boolean;
     maxRecentProjects: number;
+    leftTabsMode?: LeftTabsMode;
+    tabsByWorktree?: Record<string, string[]>;
 }
 export declare const DEFAULT_PREFERENCES: WorkspacePreferences;
 export interface ProjectInput {
@@ -236,24 +239,21 @@ export interface WorkspaceNewSessionTargetInput {
  * "+ session" / "new session" action to spawn a session in a workspace.
  */
 export declare function resolveWorkspaceNewSessionDirectory(input: WorkspaceNewSessionTargetInput): string | undefined;
+export declare const MARQUEE_GAP = "     ";
 export interface MarqueeTimingOptions {
     readonly holdStartMs?: number;
     readonly stepMs?: number;
-    readonly holdEndMs?: number;
-    readonly returnStepMs?: number;
-    readonly betweenCyclesMs?: number;
 }
 /**
- * Computes horizontal column scroll offset (`0 .. maxScrollX`) for a hovered/focused
- * workspace or session label that overflows its container width.
+ * Computes one-directional horizontal column scroll offset (`0 .. periodCols - 1`)
+ * for a seamless ticker marquee (`"${text}${MARQUEE_GAP}${text}"`).
  *
  * Cycle:
- * 1. Brief initial pause at column 0 (`holdStartMs`)
- * 2. Smooth forward step to `maxScrollX` (`stepMs` per column)
- * 3. Pause at `maxScrollX` so the full suffix is easy to read (`holdEndMs`)
- * 4. Smooth glide back to column 0 (`returnStepMs` per column) + rest (`betweenCyclesMs`)
+ * 1. Brief initial settle pause at column 0 (`holdStartMs`) when first hovered/focused
+ * 2. Continuous one-way advance (`stepMs` per column) wrapping modulo `periodCols`
+ *    so the repeated copy glides into column 0 seamlessly without ever reversing
  */
-export declare function computeMarqueeScrollX(elapsedMs: number, maxScrollX: number, options?: MarqueeTimingOptions): number;
+export declare function computeMarqueeScrollX(elapsedMs: number, periodCols: number, options?: MarqueeTimingOptions): number;
 export interface EditorPreset {
     readonly id: string;
     readonly title: string;
@@ -274,3 +274,65 @@ export interface ParsedEditorCommand {
  * into executable + sanitized arguments + GUI vs terminal TTY classification.
  */
 export declare function parseEditorCommand(rawCommand: string | undefined): ParsedEditorCommand | undefined;
+export interface ComposerWorkspaceBadge {
+    readonly primaryText: string;
+    readonly gitBadge?: string;
+}
+/**
+ * Formats a concise, uncapped workspace/branch badge for `session.composer.top`
+ * so long repo names never clip the active worktree/branch in OpenCode's 22-col left bar.
+ */
+export declare function formatComposerWorkspaceBadge(worktree: Pick<WorktreeNode, "label" | "sublabel" | "branch" | "isCanonical" | "dirtyCount" | "ahead" | "behind">): ComposerWorkspaceBadge;
+export declare const MAX_SCOPED_WORKTREE_TABS = 12;
+export declare const MAX_RESTORED_GROUPED_TABS = 24;
+export interface LeftTabItemInput {
+    readonly sessionID: string;
+    readonly active?: boolean;
+}
+export interface LeftTabSessionMeta {
+    readonly id: string;
+    readonly projectID: string;
+    readonly worktreeDirectory: string;
+    readonly isCanonicalWorktree: boolean;
+    readonly projectPinned: boolean;
+    readonly projectCanonical: string;
+    readonly updatedAt: number;
+}
+export interface LeftTabMoveOp {
+    readonly sessionID: string;
+    readonly index: number;
+}
+export interface LeftTabsReconcileInput {
+    readonly mode: LeftTabsMode;
+    readonly openTabs: readonly LeftTabItemInput[];
+    readonly knownSessions: ReadonlyMap<string, LeftTabSessionMeta>;
+    readonly deletedSessionIDs?: ReadonlySet<string>;
+    readonly activeRootSessionID?: string;
+    readonly activeWorktreeDirectory?: string;
+    readonly activeProjectID?: string;
+    readonly showAllGitProjects?: boolean;
+    readonly previousScopedWorktreeDirectory?: string;
+    readonly previousMode?: LeftTabsMode;
+    readonly savedTabsByWorktree: Readonly<Record<string, readonly string[]>>;
+}
+export interface LeftTabsReconcilePlan {
+    readonly toOpen: readonly string[];
+    readonly toFocus?: string;
+    readonly toClose: readonly string[];
+    readonly moves: readonly LeftTabMoveOp[];
+    readonly nextScopedWorktreeDirectory: string | undefined;
+    readonly nextSavedTabsByWorktree: Record<string, string[]>;
+}
+/**
+ * Computes minimal sequential `tabs.move(sessionID, index)` operations to transform
+ * `currentOrder` into `desiredOrder`. Returns `[]` when already ordered.
+ */
+export declare function computeMinimalTabMoves(currentOrder: readonly string[], desiredOrder: readonly string[]): LeftTabMoveOp[];
+/**
+ * Pure planner for organizing OpenCode's left session tabs (`context.ui.tabs`) in either:
+ * - `"scoped"` mode: swaps the left tab bar to show only the active worktree's sessions,
+ *   remembering open tabs & tab order per worktree without deleting any session history.
+ * - `"grouped"` mode: keeps tabs across worktrees open simultaneously, stably clustered
+ *   by repository and worktree without cursor-jumping on tab clicks.
+ */
+export declare function planLeftTabsReconciliation(input: LeftTabsReconcileInput): LeftTabsReconcilePlan;

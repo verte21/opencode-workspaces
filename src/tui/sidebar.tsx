@@ -4,7 +4,6 @@ import { For, Show, createEffect, createMemo } from "solid-js"
 import {
   dirBasename,
   resolveWorkspaceNewSessionDirectory,
-  rollupHiddenWorktreeStatus,
   type ProjectNode,
   type WorktreeNode,
 } from "../model.js"
@@ -21,7 +20,7 @@ import {
   resolveStatusColor,
   sameStringArray,
   statusGlyph,
-  statusLabel,
+  workspaceStatusGlyph,
 } from "./types.js"
 
 function isLeftClick(event: { readonly button?: number }): boolean {
@@ -67,11 +66,6 @@ function renderSidebarWorktreeRow(
           [],
           { equals: sameStringArray },
         )
-        const hiddenRollup = createMemo(() =>
-          rollupHiddenWorktreeStatus(wt(), visibleSessions()),
-        )
-        const rowStatus = () => hiddenRollup().status
-        const rowStatusDetail = () => hiddenRollup().detail
         const isRowHovered = () => worktreeHover.hoveredKey() === wt().directory
         const isChevronHovered = () =>
           chevronHover.hoveredKey() === wt().directory
@@ -123,25 +117,16 @@ function renderSidebarWorktreeRow(
                 >
                   <text
                     fg={
-                      hasSessions() &&
-                      isChevronHovered() &&
-                      !wt().isCurrent &&
-                      rowStatus() === "idle"
+                      hasSessions() && isChevronHovered() && !wt().isCurrent
                         ? context.theme.text.base
-                        : isRowHovered() &&
-                            !wt().isCurrent &&
-                            rowStatus() === "idle"
-                          ? context.theme.text.muted
-                          : resolveStatusColor(
-                              context.theme,
-                              rowStatus(),
-                              wt().isCurrent,
-                            )
+                        : wt().isCurrent
+                          ? context.theme.text.action.primary.selected
+                          : isRowHovered()
+                            ? context.theme.text.muted
+                            : context.theme.text.faint
                     }
                     attributes={
-                      rowStatus() !== "idle" ||
-                      wt().isCurrent ||
-                      (hasSessions() && isChevronHovered())
+                      wt().isCurrent || (hasSessions() && isChevronHovered())
                         ? TextAttributes.BOLD
                         : TextAttributes.NONE
                     }
@@ -152,7 +137,7 @@ function renderSidebarWorktreeRow(
                       ? isExpanded()
                         ? "▾"
                         : "▸"
-                      : statusGlyph(rowStatus(), false)}
+                      : "·"}
                   </text>
                 </box>
                 <HoverMarqueeText
@@ -160,7 +145,7 @@ function renderSidebarWorktreeRow(
                   text={wt().label}
                   active={isRowHovered()}
                   fg={
-                    wt().isCurrent || rowStatus() !== "idle" || isRowHovered()
+                    wt().isCurrent || wt().status !== "idle" || isRowHovered()
                       ? context.theme.text.base
                       : context.theme.text.muted
                   }
@@ -204,14 +189,15 @@ function renderSidebarWorktreeRow(
                     {isRowHovered() ? "+" : " "}
                   </text>
                 </box>
-                <Show when={statusLabel(rowStatus(), rowStatusDetail())}>
+                <Show when={workspaceStatusGlyph(wt().status)}>
                   {(badge) => (
                     <text
                       fg={resolveStatusColor(
                         context.theme,
-                        rowStatus(),
+                        wt().status,
                         wt().isCurrent,
                       )}
+                      attributes={TextAttributes.BOLD}
                       selectable={false}
                       wrapMode="none"
                     >
@@ -405,27 +391,6 @@ function renderSidebarWorktreeRow(
                               {isSessHovered() ? "×" : " "}
                             </text>
                           </box>
-                          <Show
-                            when={statusLabel(
-                              session().status,
-                              session().statusDetail,
-                            )}
-                          >
-                            {(badge) => (
-                              <text
-                                fg={resolveStatusColor(
-                                  context.theme,
-                                  session().status,
-                                  session().isCurrent,
-                                )}
-                                selectable={false}
-                                wrapMode="none"
-                                flexShrink={0}
-                              >
-                                {badge()}
-                              </text>
-                            )}
-                          </Show>
                         </box>
                       </box>
                     )}

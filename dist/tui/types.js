@@ -1,9 +1,6 @@
 export const PANEL_NAME = "opencode-workspaces.panel";
-export function worktreeGlyph(status, isCurrent) {
-  if (status === "blocked") return "!";
-  if (status === "working") return "●";
-  if (isCurrent) return "▸";
-  return "○";
+export function worktreeGlyph(isCurrent) {
+  return isCurrent ? "▸" : "○";
 }
 export function statusGlyph(status, isCurrent) {
   if (status === "blocked") return "!";
@@ -11,11 +8,14 @@ export function statusGlyph(status, isCurrent) {
   if (isCurrent) return "▸";
   return "·";
 }
-export function statusLabel(status, detail) {
-  if (status === "blocked") {
-    return detail === "permission" ? "perm" : "ask";
-  }
-  if (status === "working") return "busy";
+
+/**
+ * General workspace-level status indicator shown on worktree rows (folded or unfolded),
+ * distinct from individual session icons (`!` / `●`).
+ */
+export function workspaceStatusGlyph(status) {
+  if (status === "blocked") return "⚠";
+  if (status === "working") return "◉";
   return undefined;
 }
 export function sameStringArray(a, b) {

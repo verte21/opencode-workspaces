@@ -10,10 +10,10 @@ import { createComponent as _$createComponent } from "@opentui/solid";
 /** @jsxImportSource @opentui/solid */
 import { MouseButton, TextAttributes } from "@opentui/core";
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
-import { dirBasename, rollupHiddenWorktreeStatus } from "../model.js";
+import { dirBasename } from "../model.js";
 import { createHoverFlagSignal, createHoverKeySignal } from "./hover.js";
 import { HoverMarqueeText } from "./marquee.js";
-import { resolvePanelRowBg, resolveSidebarAccentHoverBg, resolveSidebarHoverBg, resolveStatusColor, sameStringArray, statusGlyph, statusLabel, worktreeGlyph } from "./types.js";
+import { resolvePanelRowBg, resolveSidebarAccentHoverBg, resolveSidebarHoverBg, resolveStatusColor, sameStringArray, statusGlyph, workspaceStatusGlyph, worktreeGlyph } from "./types.js";
 function isLeftClick(event) {
   return event.button === undefined || event.button === MouseButton.LEFT;
 }
@@ -424,9 +424,6 @@ export const WorkspacesPanel = props => {
         },
         children: row => {
           const wt = () => row().worktree;
-          const hiddenRollup = createMemo(() => rollupHiddenWorktreeStatus(wt(), wt().sessions));
-          const rowStatus = () => hiddenRollup().status;
-          const rowStatusDetail = () => hiddenRollup().detail;
           return (() => {
             var _el$8 = _$createElement("box"),
               _el$9 = _$createElement("box"),
@@ -468,7 +465,7 @@ export const WorkspacesPanel = props => {
             })());
             _$setProp(_el$1, "selectable", false);
             _$setProp(_el$1, "wrapMode", "none");
-            _$insert(_el$1, () => worktreeGlyph(rowStatus(), wt().isCurrent));
+            _$insert(_el$1, () => worktreeGlyph(wt().isCurrent));
             _$insert(_el$9, _$createComponent(HoverMarqueeText, {
               renderer: getRenderer,
               get text() {
@@ -478,7 +475,7 @@ export const WorkspacesPanel = props => {
                 return isRowActive();
               },
               get fg() {
-                return _$memo(() => !!(wt().isCurrent || rowStatus() !== "idle" || isRowActive()))() ? context.theme.text.base : context.theme.text.muted;
+                return _$memo(() => !!(wt().isCurrent || wt().status !== "idle" || isRowActive()))() ? context.theme.text.base : context.theme.text.muted;
               },
               get attributes() {
                 return _$memo(() => !!(wt().isCurrent || isSelected()))() ? TextAttributes.BOLD : TextAttributes.NONE;
@@ -490,14 +487,23 @@ export const WorkspacesPanel = props => {
             _$setProp(_el$10, "flexShrink", 0);
             _$insert(_el$10, _$createComponent(Show, {
               get when() {
-                return statusLabel(rowStatus(), rowStatusDetail());
+                return workspaceStatusGlyph(wt().status);
               },
               children: badge => (() => {
                 var _el$17 = _$createElement("text");
                 _$setProp(_el$17, "selectable", false);
                 _$setProp(_el$17, "wrapMode", "none");
                 _$insert(_el$17, badge);
-                _$effect(_$p => _$setProp(_el$17, "fg", resolveStatusColor(context.theme, rowStatus(), wt().isCurrent), _$p));
+                _$effect(_p$ => {
+                  var _v$0 = resolveStatusColor(context.theme, wt().status, wt().isCurrent),
+                    _v$1 = TextAttributes.BOLD;
+                  _v$0 !== _p$.e && (_p$.e = _$setProp(_el$17, "fg", _v$0, _p$.e));
+                  _v$1 !== _p$.t && (_p$.t = _$setProp(_el$17, "attributes", _v$1, _p$.t));
+                  return _p$;
+                }, {
+                  e: undefined,
+                  t: undefined
+                });
                 return _el$17;
               })()
             }), null);
@@ -550,7 +556,7 @@ export const WorkspacesPanel = props => {
               var _v$5 = needsWorktreeGap() ? 1 : 0,
                 _v$6 = rowBg(),
                 _v$7 = isRowActive() ? context.theme.text.muted : context.theme.text.faint,
-                _v$8 = isRowActive() && !wt().isCurrent && rowStatus() === "idle" ? context.theme.text.muted : resolveStatusColor(context.theme, rowStatus(), wt().isCurrent),
+                _v$8 = wt().isCurrent ? context.theme.text.action.primary.selected : isRowActive() ? context.theme.text.muted : context.theme.text.faint,
                 _v$9 = TextAttributes.BOLD;
               _v$5 !== _p$.e && (_p$.e = _$setProp(_el$8, "marginTop", _v$5, _p$.e));
               _v$6 !== _p$.t && (_p$.t = _$setProp(_el$8, "backgroundColor", _v$6, _p$.t));
@@ -662,33 +668,19 @@ export const WorkspacesPanel = props => {
           _$setProp(_el$24, "selectable", false);
           _$setProp(_el$24, "wrapMode", "none");
           _$insert(_el$24, () => isRowActive() ? "×" : " ");
-          _$insert(_el$22, _$createComponent(Show, {
-            get when() {
-              return statusLabel(s().status, s().statusDetail) ?? (s().isCurrent ? "active" : undefined);
-            },
-            children: badge => (() => {
-              var _el$25 = _$createElement("text");
-              _$setProp(_el$25, "selectable", false);
-              _$setProp(_el$25, "wrapMode", "none");
-              _$setProp(_el$25, "flexShrink", 0);
-              _$insert(_el$25, badge);
-              _$effect(_$p => _$setProp(_el$25, "fg", s().status !== "idle" ? resolveStatusColor(context.theme, s().status, s().isCurrent) : isRowActive() ? context.theme.text.muted : context.theme.text.faint, _$p));
-              return _el$25;
-            })()
-          }), null);
           _$effect(_p$ => {
-            var _v$0 = rowBg(),
-              _v$1 = isRowActive() ? context.theme.text.muted : context.theme.text.faint,
-              _v$10 = isRowActive() && !s().isCurrent && s().status === "idle" ? context.theme.text.muted : resolveStatusColor(context.theme, s().status, s().isCurrent),
-              _v$11 = isSessHovered() && isDeleteHovered() ? resolveSidebarAccentHoverBg(context.theme) : undefined,
-              _v$12 = isDeleteHovered() ? context.theme.text.feedback.error.base : context.theme.text.muted,
-              _v$13 = isDeleteHovered() ? TextAttributes.BOLD : TextAttributes.NONE;
-            _v$0 !== _p$.e && (_p$.e = _$setProp(_el$18, "backgroundColor", _v$0, _p$.e));
-            _v$1 !== _p$.t && (_p$.t = _$setProp(_el$20, "fg", _v$1, _p$.t));
-            _v$10 !== _p$.a && (_p$.a = _$setProp(_el$21, "fg", _v$10, _p$.a));
-            _v$11 !== _p$.o && (_p$.o = _$setProp(_el$23, "backgroundColor", _v$11, _p$.o));
-            _v$12 !== _p$.i && (_p$.i = _$setProp(_el$24, "fg", _v$12, _p$.i));
-            _v$13 !== _p$.n && (_p$.n = _$setProp(_el$24, "attributes", _v$13, _p$.n));
+            var _v$10 = rowBg(),
+              _v$11 = isRowActive() ? context.theme.text.muted : context.theme.text.faint,
+              _v$12 = isRowActive() && !s().isCurrent && s().status === "idle" ? context.theme.text.muted : resolveStatusColor(context.theme, s().status, s().isCurrent),
+              _v$13 = isSessHovered() && isDeleteHovered() ? resolveSidebarAccentHoverBg(context.theme) : undefined,
+              _v$14 = isDeleteHovered() ? context.theme.text.feedback.error.base : context.theme.text.muted,
+              _v$15 = isDeleteHovered() ? TextAttributes.BOLD : TextAttributes.NONE;
+            _v$10 !== _p$.e && (_p$.e = _$setProp(_el$18, "backgroundColor", _v$10, _p$.e));
+            _v$11 !== _p$.t && (_p$.t = _$setProp(_el$20, "fg", _v$11, _p$.t));
+            _v$12 !== _p$.a && (_p$.a = _$setProp(_el$21, "fg", _v$12, _p$.a));
+            _v$13 !== _p$.o && (_p$.o = _$setProp(_el$23, "backgroundColor", _v$13, _p$.o));
+            _v$14 !== _p$.i && (_p$.i = _$setProp(_el$24, "fg", _v$14, _p$.i));
+            _v$15 !== _p$.n && (_p$.n = _$setProp(_el$24, "attributes", _v$15, _p$.n));
             return _p$;
           }, {
             e: undefined,
@@ -704,86 +696,86 @@ export const WorkspacesPanel = props => {
     });
   };
   return (() => {
-    var _el$26 = _$createElement("box"),
-      _el$27 = _$createElement("box"),
-      _el$28 = _$createElement("text"),
+    var _el$25 = _$createElement("box"),
+      _el$26 = _$createElement("box"),
+      _el$27 = _$createElement("text"),
+      _el$29 = _$createElement("box"),
       _el$30 = _$createElement("box"),
-      _el$31 = _$createElement("box"),
-      _el$32 = _$createElement("text"),
-      _el$34 = _$createElement("text"),
-      _el$35 = _$createTextNode(` · esc`),
-      _el$36 = _$createElement("scrollbox"),
+      _el$31 = _$createElement("text"),
+      _el$33 = _$createElement("text"),
+      _el$34 = _$createTextNode(` · esc`),
+      _el$35 = _$createElement("scrollbox"),
+      _el$36 = _$createElement("box"),
       _el$37 = _$createElement("box"),
-      _el$38 = _$createElement("box"),
-      _el$39 = _$createElement("text");
-    _$insertNode(_el$26, _el$27);
-    _$insertNode(_el$26, _el$36);
-    _$insertNode(_el$26, _el$38);
+      _el$38 = _$createElement("text");
+    _$insertNode(_el$25, _el$26);
+    _$insertNode(_el$25, _el$35);
+    _$insertNode(_el$25, _el$37);
     _$use(el => {
       containerRef = el;
-    }, _el$26);
-    _$setProp(_el$26, "flexDirection", "column");
-    _$setProp(_el$26, "width", "100%");
-    _$setProp(_el$26, "height", "100%");
-    _$setProp(_el$26, "paddingY", 1);
-    _$setProp(_el$26, "focusable", true);
-    _$setProp(_el$26, "onMouseDown", () => props.panel.focus());
-    _$setProp(_el$26, "onKeyDown", handleKeyDown);
-    _$insertNode(_el$27, _el$28);
-    _$insertNode(_el$27, _el$30);
-    _$setProp(_el$27, "flexDirection", "row");
-    _$setProp(_el$27, "justifyContent", "space-between");
-    _$setProp(_el$27, "alignItems", "center");
-    _$setProp(_el$27, "paddingX", 1);
-    _$setProp(_el$27, "paddingBottom", 1);
-    _$insertNode(_el$28, _$createTextNode(`Worktrees`));
-    _$setProp(_el$28, "selectable", false);
-    _$setProp(_el$28, "wrapMode", "none");
+    }, _el$25);
+    _$setProp(_el$25, "flexDirection", "column");
+    _$setProp(_el$25, "width", "100%");
+    _$setProp(_el$25, "height", "100%");
+    _$setProp(_el$25, "paddingY", 1);
+    _$setProp(_el$25, "focusable", true);
+    _$setProp(_el$25, "onMouseDown", () => props.panel.focus());
+    _$setProp(_el$25, "onKeyDown", handleKeyDown);
+    _$insertNode(_el$26, _el$27);
+    _$insertNode(_el$26, _el$29);
+    _$setProp(_el$26, "flexDirection", "row");
+    _$setProp(_el$26, "justifyContent", "space-between");
+    _$setProp(_el$26, "alignItems", "center");
+    _$setProp(_el$26, "paddingX", 1);
+    _$setProp(_el$26, "paddingBottom", 1);
+    _$insertNode(_el$27, _$createTextNode(`Worktrees`));
+    _$setProp(_el$27, "selectable", false);
+    _$setProp(_el$27, "wrapMode", "none");
+    _$insertNode(_el$29, _el$30);
+    _$insertNode(_el$29, _el$33);
+    _$setProp(_el$29, "flexDirection", "row");
+    _$setProp(_el$29, "columnGap", 2);
+    _$setProp(_el$29, "alignItems", "center");
     _$insertNode(_el$30, _el$31);
-    _$insertNode(_el$30, _el$34);
-    _$setProp(_el$30, "flexDirection", "row");
-    _$setProp(_el$30, "columnGap", 2);
-    _$setProp(_el$30, "alignItems", "center");
-    _$insertNode(_el$31, _el$32);
-    _$setProp(_el$31, "onMouseOver", () => panelNewSessionHover.onEnter());
-    _$setProp(_el$31, "onMouseOut", () => panelNewSessionHover.onLeave());
-    _$setProp(_el$31, "onMouseUp", event => {
+    _$setProp(_el$30, "onMouseOver", () => panelNewSessionHover.onEnter());
+    _$setProp(_el$30, "onMouseOut", () => panelNewSessionHover.onLeave());
+    _$setProp(_el$30, "onMouseUp", event => {
       event.stopPropagation();
       const row = selectedRow();
       const dir = resolveRowDirectory(row);
       if (!dir) return;
       void ctrl.createSessionInDirectory(dir, `Started session in ${dirBasename(dir)}`, row?.project.id);
     });
-    _$insertNode(_el$32, _$createTextNode(`+ New session`));
-    _$setProp(_el$32, "selectable", false);
-    _$setProp(_el$32, "wrapMode", "none");
-    _$insertNode(_el$34, _el$35);
-    _$setProp(_el$34, "selectable", false);
-    _$setProp(_el$34, "wrapMode", "none");
-    _$insert(_el$34, () => ctrl.prefs.showAllGitProjects ? "all git repos" : "current repo", _el$35);
-    _$insertNode(_el$36, _el$37);
+    _$insertNode(_el$31, _$createTextNode(`+ New session`));
+    _$setProp(_el$31, "selectable", false);
+    _$setProp(_el$31, "wrapMode", "none");
+    _$insertNode(_el$33, _el$34);
+    _$setProp(_el$33, "selectable", false);
+    _$setProp(_el$33, "wrapMode", "none");
+    _$insert(_el$33, () => ctrl.prefs.showAllGitProjects ? "all git repos" : "current repo", _el$34);
+    _$insertNode(_el$35, _el$36);
     _$use(el => {
       panelScrollRef = el;
-    }, _el$36);
-    _$setProp(_el$36, "flexGrow", 1);
-    _$setProp(_el$37, "flexDirection", "column");
-    _$setProp(_el$37, "width", "100%");
-    _$insert(_el$37, _$createComponent(Show, {
+    }, _el$35);
+    _$setProp(_el$35, "flexGrow", 1);
+    _$setProp(_el$36, "flexDirection", "column");
+    _$setProp(_el$36, "width", "100%");
+    _$insert(_el$36, _$createComponent(Show, {
       get when() {
         return rowKeys().length > 0;
       },
       get fallback() {
         return (() => {
-          var _el$41 = _$createElement("box"),
-            _el$42 = _$createElement("text");
-          _$insertNode(_el$41, _el$42);
-          _$setProp(_el$41, "paddingX", 1);
-          _$setProp(_el$41, "paddingY", 1);
-          _$insertNode(_el$42, _$createTextNode(`No Git worktrees for this folder. Press "a" to browse all Git repositories, or "n" inside a Git repo to create a worktree.`));
-          _$setProp(_el$42, "selectable", false);
-          _$setProp(_el$42, "wrapMode", "word");
-          _$effect(_$p => _$setProp(_el$42, "fg", context.theme.text.muted, _$p));
-          return _el$41;
+          var _el$40 = _$createElement("box"),
+            _el$41 = _$createElement("text");
+          _$insertNode(_el$40, _el$41);
+          _$setProp(_el$40, "paddingX", 1);
+          _$setProp(_el$40, "paddingY", 1);
+          _$insertNode(_el$41, _$createTextNode(`No Git worktrees for this folder. Press "a" to browse all Git repositories, or "n" inside a Git repo to create a worktree.`));
+          _$setProp(_el$41, "selectable", false);
+          _$setProp(_el$41, "wrapMode", "word");
+          _$effect(_$p => _$setProp(_el$41, "fg", context.theme.text.muted, _$p));
+          return _el$40;
         })();
       },
       get children() {
@@ -795,21 +787,21 @@ export const WorkspacesPanel = props => {
         });
       }
     }));
-    _$insertNode(_el$38, _el$39);
-    _$setProp(_el$38, "flexDirection", "column");
-    _$setProp(_el$38, "paddingX", 1);
-    _$setProp(_el$38, "paddingTop", 1);
-    _$insert(_el$38, _$createComponent(Show, {
+    _$insertNode(_el$37, _el$38);
+    _$setProp(_el$37, "flexDirection", "column");
+    _$setProp(_el$37, "paddingX", 1);
+    _$setProp(_el$37, "paddingTop", 1);
+    _$insert(_el$37, _$createComponent(Show, {
       get when() {
         return selectedPath();
       },
       children: path => (() => {
-        var _el$44 = _$createElement("box");
-        _$setProp(_el$44, "width", "100%");
-        _$setProp(_el$44, "overflow", "hidden");
-        _$setProp(_el$44, "onMouseOver", () => footerPathHover.onEnter());
-        _$setProp(_el$44, "onMouseOut", () => footerPathHover.onLeave());
-        _$insert(_el$44, _$createComponent(HoverMarqueeText, {
+        var _el$43 = _$createElement("box");
+        _$setProp(_el$43, "width", "100%");
+        _$setProp(_el$43, "overflow", "hidden");
+        _$setProp(_el$43, "onMouseOver", () => footerPathHover.onEnter());
+        _$setProp(_el$43, "onMouseOut", () => footerPathHover.onLeave());
+        _$insert(_el$43, _$createComponent(HoverMarqueeText, {
           renderer: getRenderer,
           get text() {
             return path();
@@ -822,29 +814,29 @@ export const WorkspacesPanel = props => {
           },
           flexShrink: 1
         }));
-        return _el$44;
+        return _el$43;
       })()
-    }), _el$39);
-    _$insertNode(_el$39, _$createTextNode(`j/k move · ⏎ open · o editor · n worktree · s session · p pin · x remove · a repos`));
-    _$setProp(_el$39, "selectable", false);
-    _$setProp(_el$39, "wrapMode", "word");
+    }), _el$38);
+    _$insertNode(_el$38, _$createTextNode(`j/k move · ⏎ open · o editor · n worktree · s session · p pin · x remove · a repos`));
+    _$setProp(_el$38, "selectable", false);
+    _$setProp(_el$38, "wrapMode", "word");
     _$effect(_p$ => {
-      var _v$14 = props.panel.focused,
-        _v$15 = context.theme.text.base,
-        _v$16 = TextAttributes.BOLD,
-        _v$17 = panelNewSessionHovered() ? resolveSidebarHoverBg(context.theme) : undefined,
-        _v$18 = panelNewSessionHovered() ? context.theme.text.action.primary.selected : context.theme.text.base,
-        _v$19 = TextAttributes.BOLD,
-        _v$20 = context.theme.text.faint,
-        _v$21 = context.theme.text.faint;
-      _v$14 !== _p$.e && (_p$.e = _$setProp(_el$26, "focused", _v$14, _p$.e));
-      _v$15 !== _p$.t && (_p$.t = _$setProp(_el$28, "fg", _v$15, _p$.t));
-      _v$16 !== _p$.a && (_p$.a = _$setProp(_el$28, "attributes", _v$16, _p$.a));
-      _v$17 !== _p$.o && (_p$.o = _$setProp(_el$31, "backgroundColor", _v$17, _p$.o));
-      _v$18 !== _p$.i && (_p$.i = _$setProp(_el$32, "fg", _v$18, _p$.i));
-      _v$19 !== _p$.n && (_p$.n = _$setProp(_el$32, "attributes", _v$19, _p$.n));
-      _v$20 !== _p$.s && (_p$.s = _$setProp(_el$34, "fg", _v$20, _p$.s));
-      _v$21 !== _p$.h && (_p$.h = _$setProp(_el$39, "fg", _v$21, _p$.h));
+      var _v$16 = props.panel.focused,
+        _v$17 = context.theme.text.base,
+        _v$18 = TextAttributes.BOLD,
+        _v$19 = panelNewSessionHovered() ? resolveSidebarHoverBg(context.theme) : undefined,
+        _v$20 = panelNewSessionHovered() ? context.theme.text.action.primary.selected : context.theme.text.base,
+        _v$21 = TextAttributes.BOLD,
+        _v$22 = context.theme.text.faint,
+        _v$23 = context.theme.text.faint;
+      _v$16 !== _p$.e && (_p$.e = _$setProp(_el$25, "focused", _v$16, _p$.e));
+      _v$17 !== _p$.t && (_p$.t = _$setProp(_el$27, "fg", _v$17, _p$.t));
+      _v$18 !== _p$.a && (_p$.a = _$setProp(_el$27, "attributes", _v$18, _p$.a));
+      _v$19 !== _p$.o && (_p$.o = _$setProp(_el$30, "backgroundColor", _v$19, _p$.o));
+      _v$20 !== _p$.i && (_p$.i = _$setProp(_el$31, "fg", _v$20, _p$.i));
+      _v$21 !== _p$.n && (_p$.n = _$setProp(_el$31, "attributes", _v$21, _p$.n));
+      _v$22 !== _p$.s && (_p$.s = _$setProp(_el$33, "fg", _v$22, _p$.s));
+      _v$23 !== _p$.h && (_p$.h = _$setProp(_el$38, "fg", _v$23, _p$.h));
       return _p$;
     }, {
       e: undefined,
@@ -856,6 +848,6 @@ export const WorkspacesPanel = props => {
       s: undefined,
       h: undefined
     });
-    return _el$26;
+    return _el$25;
   })();
 };

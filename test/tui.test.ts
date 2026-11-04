@@ -1251,7 +1251,7 @@ describe("TuiPlugin UI & hot-reload integration", () => {
     panelUi.renderer.destroy()
   })
 
-  test("prints '!' and 'ask' only next to unfolded session rows without duplicating onto the parent worktree row", async () => {
+  test("shows general '⚠' workspace attention icon on worktree rows (folded or unfolded) and '!' on session rows without redundant 'ask'/'perm'/'busy' text", async () => {
     const { ensureRuntimePluginSupport } = await import(
       "@opentui/solid/runtime-plugin-support/configure"
     )
@@ -1480,20 +1480,22 @@ describe("TuiPlugin UI & hot-reload integration", () => {
     await sidebarUi.renderOnce()
 
     // Initially:
-    // - 'feat/dialog' is folded with no child rows visible -> 'ask' rolls up onto 'feat/dialog'
-    // - 'main' auto-surfaces 'Bg Ask Session' below -> 'ask' & '!' appear ONLY on 'Bg Ask Session', NOT on 'main'
+    // - Both 'feat/dialog' (folded) and 'main' (with surfaced child session) display the general '⚠' workspace attention badge
+    // - Neither worktree rows nor session rows display redundant 'ask'/'perm'/'busy' text labels
     const foldedLines = sidebarUi.captureCharFrame().split("\n")
     const foldedFeatLine = foldedLines.find((l) => l.includes("▸ feat/dialog"))!
     const foldedMainLine = foldedLines.find((l) => l.includes("▸ main"))!
     const surfacedBgSessLine = foldedLines.find((l) =>
       l.includes("Bg Ask Session"),
     )!
-    expect(foldedFeatLine).toMatch(/\bask\b/)
-    expect(foldedMainLine).not.toMatch(/\bask\b/)
+    expect(foldedFeatLine).toContain("⚠")
+    expect(foldedFeatLine).not.toMatch(/\b(ask|perm|busy)\b/)
+    expect(foldedMainLine).toContain("⚠")
+    expect(foldedMainLine).not.toMatch(/\b(ask|perm|busy)\b/)
     expect(surfacedBgSessLine).toContain("! Bg Ask Session")
-    expect(surfacedBgSessLine).toMatch(/\bask\b/)
+    expect(surfacedBgSessLine).not.toMatch(/\b(ask|perm|busy)\b/)
 
-    // Unfold 'feat/dialog' -> '!' and 'ask' move exclusively to 'Asking Session' (never 2x 'ask')
+    // Unfold 'feat/dialog' -> 'feat/dialog' keeps its general '⚠' workspace icon while 'Asking Session' shows '!' (and never 'ask')
     const featIdx = foldedLines.findIndex((l) => l.includes("▸ feat/dialog"))
     await sidebarUi.mockMouse.click(6, featIdx)
     await sidebarUi.renderOnce()
@@ -1505,14 +1507,15 @@ describe("TuiPlugin UI & hot-reload integration", () => {
     const unfoldedAskSessLine = unfoldedLines.find((l) =>
       l.includes("Asking Session"),
     )!
+    expect(unfoldedFeatLine).toContain("⚠")
     expect(unfoldedFeatLine).not.toContain("!")
-    expect(unfoldedFeatLine).not.toMatch(/\bask\b/)
+    expect(unfoldedFeatLine).not.toMatch(/\b(ask|perm|busy)\b/)
     expect(unfoldedAskSessLine).toContain("└─ ! Asking Session")
-    expect(unfoldedAskSessLine).toMatch(/\bask\b/)
+    expect(unfoldedAskSessLine).not.toMatch(/\b(ask|perm|busy)\b/)
 
     sidebarUi.renderer.destroy()
 
-    // WorkspacesPanel (Ctrl+G): unfolded worktree rows show '▸'/'○' without '!' or 'ask'; session rows show '!' + 'ask'
+    // WorkspacesPanel (Ctrl+G): worktree rows show '▸'/'○' + '⚠' workspace badge; session rows show '!' without 'ask'
     const panelClaim = slots.find((s) => s.append === "session.panel")
     const panelUi = await testRender(
       () =>
@@ -1543,12 +1546,14 @@ describe("TuiPlugin UI & hot-reload integration", () => {
 
     expect(panelMainWtLine).toBeDefined()
     expect(panelFeatWtLine).toBeDefined()
-    expect(panelMainWtLine).not.toMatch(/\bask\b/)
-    expect(panelFeatWtLine).not.toMatch(/\bask\b/)
+    expect(panelMainWtLine).toContain("⚠")
+    expect(panelFeatWtLine).toContain("⚠")
+    expect(panelMainWtLine).not.toMatch(/\b(ask|perm|busy)\b/)
+    expect(panelFeatWtLine).not.toMatch(/\b(ask|perm|busy)\b/)
     expect(panelBgSessLine).toContain("! Bg Ask Session")
-    expect(panelBgSessLine).toMatch(/\bask\b/)
+    expect(panelBgSessLine).not.toMatch(/\b(ask|perm|busy)\b/)
     expect(panelCurSessLine).toContain("! Asking Session")
-    expect(panelCurSessLine).toMatch(/\bask\b/)
+    expect(panelCurSessLine).not.toMatch(/\b(ask|perm|busy)\b/)
 
     if (cleanup) await cleanup()
     panelUi.renderer.destroy()
@@ -2652,7 +2657,6 @@ describe("TuiPlugin UI & hot-reload integration", () => {
     expect(selectCalls[0]!.options.map((o: any) => o.value)).toEqual([
       "delete",
       "open",
-      "close-tab",
     ])
     expect(navigatedSessions).toEqual([])
     expect(removedSessionIDs).toEqual(["sess-2"])
@@ -2713,5 +2717,467 @@ describe("TuiPlugin UI & hot-reload integration", () => {
 
     if (cleanup) await cleanup()
     panelUi.renderer.destroy()
+  })
+
+  test("HoverMarqueeText loops seamlessly in one direction across the wrap boundary without reversing", async () => {
+    const { ensureRuntimePluginSupport } = await import(
+      "@opentui/solid/runtime-plugin-support/configure"
+    )
+    const { ensurePluginRuntime } = await import("@opencode/plugin/runtime")
+    const { testRender } = await import("@opentui/solid")
+    const { createComponent, createSignal } = await import("solid-js")
+    const { HoverMarqueeText } = await import("../src/tui/marquee.js")
+    const { MARQUEE_GAP } = await import("../src/model.js")
+
+    const runtimeMods = ensurePluginRuntime()
+    ensureRuntimePluginSupport({
+      additional: Object.fromEntries(
+        Object.entries(runtimeMods).map(([k, loader]) => [
+          k,
+          (loader as () => any)(),
+        ]),
+      ) as Record<string, any>,
+    })
+
+    const [active, setActive] = createSignal(false)
+    let tickCallback: ((dt: number) => void) | undefined
+    const label = "feat/loop-test" // 14 chars in a 10-col viewport
+    const expectedBelt = `${label}${MARQUEE_GAP}${label}`
+
+    let baseRenderer: any
+    const controlledRenderer = new Proxy(
+      {},
+      {
+        get(_t, prop) {
+          if (prop === "onAnimationTick") {
+            return (_interval: number, cb: (dt: number) => void) => {
+              tickCallback = cb
+              return () => {
+                tickCallback = undefined
+              }
+            }
+          }
+          const val = baseRenderer?.[prop]
+          return typeof val === "function" ? val.bind(baseRenderer) : val
+        },
+      },
+    )
+
+    const ui = await testRender(
+      () =>
+        createComponent(HoverMarqueeText, {
+          renderer: () => controlledRenderer as any,
+          text: label,
+          get active() {
+            return active()
+          },
+          fg: "#ffffff",
+        }),
+      { width: 10, height: 2 },
+    )
+    baseRenderer = ui.renderer
+    await ui.renderOnce()
+    expect(ui.captureCharFrame().split("\n")[0]).toBe("feat/loop-")
+
+    setActive(true)
+    await ui.renderOnce()
+    expect(tickCallback).toBeDefined()
+
+    // Initial holdStartMs = 280 -> step 1; then every 65ms advances 1 column in the same direction
+    const period = label.length + MARQUEE_GAP.length // 19
+    tickCallback!(280)
+    await ui.renderOnce()
+    expect(ui.captureCharFrame().split("\n")[0]).toBe(expectedBelt.slice(1, 11))
+
+    for (let step = 2; step <= period + 3; step += 1) {
+      tickCallback!(65)
+      await ui.renderOnce()
+      const offset = step % period
+      expect(ui.captureCharFrame().split("\n")[0]).toBe(
+        expectedBelt.slice(offset, offset + 10),
+      )
+    }
+
+    // Unhovering immediately snaps back to resting single-copy view
+    setActive(false)
+    await ui.renderOnce()
+    expect(ui.captureCharFrame().split("\n")[0]).toBe("feat/loop-")
+
+    ui.renderer.destroy()
+  })
+
+  test("organizes left session tabs in scoped and grouped modes and renders uncapped WorkspaceComposerBar above prompt", async () => {
+    const { ensureRuntimePluginSupport } = await import(
+      "@opentui/solid/runtime-plugin-support/configure"
+    )
+    const { ensurePluginRuntime } = await import("@opencode/plugin/runtime")
+    const { testRender } = await import("@opentui/solid")
+    const { createSignal } = await import("solid-js")
+    const { createStore, produce } = await import("solid-js/store")
+    const { DEFAULT_PREFERENCES } = await import("../src/model.js")
+
+    const runtimeMods = ensurePluginRuntime()
+    ensureRuntimePluginSupport({
+      additional: Object.fromEntries(
+        Object.entries(runtimeMods).map(([k, loader]) => [
+          k,
+          (loader as () => any)(),
+        ]),
+      ) as Record<string, any>,
+    })
+
+    const { default: TuiPlugin } = await import("../src/tui.js")
+
+    const repoRoot = "/Users/dev/opencode-workspaces"
+    const wt1Dir = "/Users/dev/opencode-workspaces/test-workspaces/workspace-1"
+    const wt2Dir = "/Users/dev/opencode-workspaces/test-workspaces/workspace-2"
+
+    const projects = [
+      {
+        id: "proj-1",
+        canonical: repoRoot,
+        vcs: "git",
+        name: "opencode-workspaces",
+        sandboxes: [wt1Dir, wt2Dir],
+        time: { created: 1, updated: 2, active: 3 },
+      },
+    ]
+
+    const sessions = [
+      {
+        id: "main-1",
+        projectID: "proj-1",
+        title: "Main 1",
+        time: { created: 1, updated: 100 },
+        location: { directory: repoRoot },
+      },
+      {
+        id: "main-2",
+        projectID: "proj-1",
+        title: "Main 2",
+        time: { created: 1, updated: 90 },
+        location: { directory: repoRoot },
+      },
+      {
+        id: "wt1-1",
+        projectID: "proj-1",
+        title: "WT1 Primary",
+        time: { created: 1, updated: 200 },
+        location: { directory: wt1Dir },
+      },
+      {
+        id: "wt1-2",
+        projectID: "proj-1",
+        title: "WT1 Secondary",
+        time: { created: 1, updated: 150 },
+        location: { directory: wt1Dir },
+      },
+      {
+        id: "wt2-1",
+        projectID: "proj-1",
+        title: "WT2 Blocked",
+        time: { created: 1, updated: 180 },
+        location: { directory: wt2Dir },
+      },
+    ]
+
+    const [activeSessionID, setActiveSessionID] = createSignal("wt1-1")
+    const [tabIDs, setTabIDs] = createSignal<string[]>([
+      "main-1",
+      "main-2",
+      "wt1-1",
+      "wt2-1",
+    ])
+    const [activeTabID, setActiveTabID] = createSignal("wt1-1")
+
+    const [prefs, setPrefs] = createStore<any>({ ...DEFAULT_PREFERENCES })
+    const [cache, setCache] = createStore<any>({
+      worktreesByProject: { "proj-1": [wt1Dir, wt2Dir] },
+      gitWorktreesByRoot: {},
+      gitByDirectory: {
+        [repoRoot]: { branch: "main", dirtyCount: 0, ahead: 0, behind: 0 },
+        [wt1Dir]: {
+          branch: "test/workspace-1",
+          dirtyCount: 2,
+          ahead: 0,
+          behind: 0,
+        },
+        [wt2Dir]: {
+          branch: "test/workspace-2",
+          dirtyCount: 0,
+          ahead: 0,
+          behind: 0,
+        },
+      },
+      lastSyncedAt: Date.now(),
+    })
+
+    const slots: any[] = []
+    let registeredCommands: any[] = []
+    let dialogOpenCount = 0
+
+    const makeThemeToken = (): any =>
+      new Proxy(
+        {},
+        {
+          get(_t, prop) {
+            if (prop === Symbol.toPrimitive) return () => "#ffffff"
+            if (
+              prop === "base" ||
+              prop === "muted" ||
+              prop === "faint" ||
+              prop === "selected" ||
+              prop === "focused" ||
+              prop === "hovered" ||
+              prop === "disabled" ||
+              prop === "low" ||
+              prop === "high" ||
+              prop === "max" ||
+              typeof prop === "number" ||
+              /^\d+$/.test(String(prop))
+            ) {
+              return "#cbd5e1"
+            }
+            if (prop === "surface") return () => makeThemeToken()
+            return makeThemeToken()
+          },
+        },
+      )
+
+    const boot = await testRender(() => null as any, { width: 80, height: 24 })
+    const mockContext: any = {
+      options: {},
+      location: { directory: repoRoot },
+      app: { version: "2.2.5", channel: "latest" },
+      renderer: boot.renderer,
+      client: {
+        rpc: () => ({
+          inspectLocations: async () => ({
+            summaries: cache.gitByDirectory,
+            worktreesByRoot: {},
+          }),
+          events: { on: () => () => {} },
+        }),
+        worktree: {
+          refresh: async () => {},
+          list: async () => [{ directory: wt1Dir }, { directory: wt2Dir }],
+        },
+        vcs: {
+          get: async () => ({ data: { branch: { current: "main" } } }),
+          status: async () => ({ data: [] }),
+        },
+        session: {
+          create: async ({ location }: any) => ({
+            id: "spawned",
+            projectID: "proj-1",
+            location,
+          }),
+          move: async () => {},
+        },
+      },
+      data: {
+        on: () => () => {},
+        listen: () => () => {},
+        session: {
+          list: () => sessions,
+          get: (id: string) => sessions.find((s) => s.id === id),
+          root: (id: string) => id,
+          family: (id: string) => [id],
+          cost: () => 0,
+          status: () => "idle",
+          pending: { list: () => [], sync: async () => {}, invalidate: () => {} },
+          sync: async () => {},
+          invalidate: () => {},
+          message: {
+            list: () => [],
+            get: () => undefined,
+            sync: async () => {},
+            invalidate: () => {},
+          },
+          permission: {
+            list: () => [],
+            sync: async () => {},
+            invalidate: () => {},
+          },
+          form: {
+            // wt2-1 has a pending form -> triggers cross-worktree '⚠ 1' badge!
+            list: (id: string) => (id === "wt2-1" ? [{ id: "form-1" }] : []),
+            sync: async () => {},
+            invalidate: () => {},
+            reply: async () => {},
+            cancel: async () => {},
+          },
+        },
+        project: {
+          list: () => projects,
+          get: (id: string) => projects.find((p) => p.id === id),
+          sync: async () => {},
+          invalidate: () => {},
+          permission: { list: () => [], sync: async () => {}, invalidate: () => {} },
+        },
+        shell: { list: () => [], get: () => undefined, sync: async () => {}, invalidate: () => {} },
+        location: {
+          default: () => ({ directory: repoRoot }),
+          sync: async () => {},
+          invalidate: () => {},
+          vcs: { info: () => undefined, sync: async () => {}, invalidate: () => {} },
+        },
+      },
+      theme: makeThemeToken(),
+      themeMode: "dark",
+      keymap: {
+        layer: (fn: any) => {
+          const layer = fn()
+          if (layer?.commands) registeredCommands = layer.commands
+        },
+      },
+      storage: {
+        store: () => [prefs, async (mut: any) => setPrefs(produce(mut))],
+        memory: () => [cache, (mut: any) => setCache(produce(mut))],
+      },
+      ui: {
+        dialog: {
+          show: () => {
+            dialogOpenCount += 1
+          },
+          set: () => {},
+          clear: () => {},
+        },
+        toast: { show: () => {} },
+        format: { path: (p: string) => p },
+        router: {
+          register: () => () => {},
+          navigate: (dest: any) => {
+            if (dest.type === "session") setActiveSessionID(dest.sessionID)
+          },
+          current: () => ({ type: "session", sessionID: activeSessionID() }),
+        },
+        panel: { open: () => true, close: () => {}, current: () => undefined },
+        tabs: {
+          enabled: () => true,
+          list: () =>
+            tabIDs().map((sessionID) => ({
+              sessionID,
+              active: activeTabID() === sessionID,
+              busy: false,
+              attention: sessionID === "wt2-1",
+            })),
+          open: (id: string) => {
+            setTabIDs((prev) => (prev.includes(id) ? prev : [...prev, id]))
+            return true
+          },
+          focus: (id: string) => {
+            setTabIDs((prev) => (prev.includes(id) ? prev : [...prev, id]))
+            setActiveTabID(id)
+            return true
+          },
+          move: (id: string, index: number) => {
+            setTabIDs((prev) => {
+              const cur = prev.indexOf(id)
+              if (cur < 0) return prev
+              const next = [...prev]
+              next.splice(cur, 1)
+              next.splice(index, 0, id)
+              return next
+            })
+            return true
+          },
+          close: (id?: string) => {
+            const target = id ?? activeTabID()
+            setTabIDs((prev) => prev.filter((x) => x !== target))
+            return true
+          },
+        },
+        slot: (c: any) => {
+          slots.push(c)
+          return () => {}
+        },
+      },
+    }
+
+    const cleanup = await TuiPlugin.setup(mockContext)
+    boot.renderer.destroy()
+
+    // 1. Default 'scoped' mode immediately scopes left tabs to active wt1 ([wt1-1, wt1-2]) and remembers main/wt2 tabs
+    expect(tabIDs()).toEqual(["wt1-1", "wt1-2"])
+
+    // User closes 'wt1-2' tab in the left pane -> stays closed!
+    mockContext.ui.tabs.close("wt1-2")
+    expect(tabIDs()).toEqual(["wt1-1"])
+
+    // 2. Render `session.composer.top` slot (`WorkspaceComposerBar`)
+    const composerClaim = slots.find((s) => s.prepend === "session.composer.top")
+    expect(composerClaim).toBeDefined()
+
+    const composerUi = await testRender(
+      () =>
+        composerClaim.render({
+          get sessionID() {
+            return activeSessionID()
+          },
+        }),
+      { width: 76, height: 3 },
+    )
+    mockContext.renderer = composerUi.renderer
+    await composerUi.renderOnce()
+
+    const barLine = composerUi.captureCharFrame().split("\n")[0]!
+    expect(barLine).toContain("⎇ test/workspace-1 · workspace-1")
+    expect(barLine).toContain("•2")
+    expect(barLine).toContain("⚠ 1")
+    expect(barLine).toContain("tabs: worktree")
+
+    // Clicking branch badge opens the /ws switcher dialog
+    await composerUi.mockMouse.click(4, 0)
+    expect(dialogOpenCount).toBe(1)
+
+    // 3. Switch active session to 'main-1' -> left tabs swap to main's remembered ['main-1', 'main-2']
+    setActiveSessionID("main-1")
+    setActiveTabID("main-1")
+    mockContext.ui.tabs.open("main-1")
+    await composerUi.renderOnce()
+    expect(tabIDs()).toEqual(["main-1", "main-2"])
+    expect(composerUi.captureCharFrame().split("\n")[0]).toContain(
+      "⎇ main · Project sessions",
+    )
+
+    // Switch back to 'wt1-1' -> restores ['wt1-1'] without resurrecting closed 'wt1-2'
+    setActiveSessionID("wt1-1")
+    setActiveTabID("wt1-1")
+    mockContext.ui.tabs.open("wt1-1")
+    await composerUi.renderOnce()
+    expect(tabIDs()).toEqual(["wt1-1"])
+
+    // 4. Click 'tabs: worktree' pill on the right side of WorkspaceComposerBar -> toggles to 'grouped' mode!
+    const currentBarLine = composerUi.captureCharFrame().split("\n")[0]!
+    const modeCol = currentBarLine.indexOf("tabs: worktree") + 2
+    expect(modeCol).toBeGreaterThan(30)
+    await composerUi.mockMouse.click(modeCol, 0)
+    await new Promise((r) => setTimeout(r, 20))
+    await composerUi.renderOnce()
+
+    expect(prefs.leftTabsMode).toBe("grouped")
+    expect(composerUi.captureCharFrame().split("\n")[0]).toContain(
+      "tabs: grouped",
+    )
+    // Restored saved tabs across worktrees, stably clustered: canonical [main-1, main-2] -> wt1 [wt1-1] -> wt2 [wt2-1]
+    expect(tabIDs()).toEqual(["main-1", "main-2", "wt1-1", "wt2-1"])
+
+    // 5. Slash command `/ws tabs scoped` switches back to scoped mode cleanly
+    const switcherCmd = registeredCommands.find(
+      (c) => c.id === "workspaces.switcher",
+    )
+    expect(switcherCmd).toBeDefined()
+    await switcherCmd.run("/ws tabs scoped")
+    await composerUi.renderOnce()
+
+    expect(prefs.leftTabsMode).toBe("scoped")
+    expect(tabIDs()).toEqual(["wt1-1"])
+    expect(composerUi.captureCharFrame().split("\n")[0]).toContain(
+      "tabs: worktree",
+    )
+
+    if (cleanup) await cleanup()
+    composerUi.renderer.destroy()
   })
 })

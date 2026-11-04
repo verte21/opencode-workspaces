@@ -9,7 +9,6 @@ import {
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js"
 import {
   dirBasename,
-  rollupHiddenWorktreeStatus,
   type FlatTreeRow,
 } from "../model.js"
 import { createHoverFlagSignal, createHoverKeySignal } from "./hover.js"
@@ -22,7 +21,7 @@ import {
   resolveStatusColor,
   sameStringArray,
   statusGlyph,
-  statusLabel,
+  workspaceStatusGlyph,
   worktreeGlyph,
   type SessionPanelSlotInput,
 } from "./types.js"
@@ -466,11 +465,6 @@ export const WorkspacesPanel = (props: {
         <Show when={wtRow()}>
           {(row) => {
             const wt = () => row().worktree
-            const hiddenRollup = createMemo(() =>
-              rollupHiddenWorktreeStatus(wt(), wt().sessions),
-            )
-            const rowStatus = () => hiddenRollup().status
-            const rowStatusDetail = () => hiddenRollup().detail
             return (
               <box
                 ref={(el) => {
@@ -519,26 +513,24 @@ export const WorkspacesPanel = (props: {
                   </text>
                   <text
                     fg={
-                      isRowActive() && !wt().isCurrent && rowStatus() === "idle"
-                        ? context.theme.text.muted
-                        : resolveStatusColor(
-                            context.theme,
-                            rowStatus(),
-                            wt().isCurrent,
-                          )
+                      wt().isCurrent
+                        ? context.theme.text.action.primary.selected
+                        : isRowActive()
+                          ? context.theme.text.muted
+                          : context.theme.text.faint
                     }
                     attributes={TextAttributes.BOLD}
                     selectable={false}
                     wrapMode="none"
                   >
-                    {worktreeGlyph(rowStatus(), wt().isCurrent)}
+                    {worktreeGlyph(wt().isCurrent)}
                   </text>
                   <HoverMarqueeText
                     renderer={getRenderer}
                     text={wt().label}
                     active={isRowActive()}
                     fg={
-                      wt().isCurrent || rowStatus() !== "idle" || isRowActive()
+                      wt().isCurrent || wt().status !== "idle" || isRowActive()
                         ? context.theme.text.base
                         : context.theme.text.muted
                     }
@@ -552,14 +544,15 @@ export const WorkspacesPanel = (props: {
                 </box>
 
                 <box flexDirection="row" columnGap={1} flexShrink={0}>
-                  <Show when={statusLabel(rowStatus(), rowStatusDetail())}>
+                  <Show when={workspaceStatusGlyph(wt().status)}>
                     {(badge) => (
                       <text
                         fg={resolveStatusColor(
                           context.theme,
-                          rowStatus(),
+                          wt().status,
                           wt().isCurrent,
                         )}
+                        attributes={TextAttributes.BOLD}
                         selectable={false}
                         wrapMode="none"
                       >
@@ -741,33 +734,6 @@ export const WorkspacesPanel = (props: {
                     {isRowActive() ? "×" : " "}
                   </text>
                 </box>
-                <Show
-                  when={
-                    statusLabel(s().status, s().statusDetail) ??
-                    (s().isCurrent ? "active" : undefined)
-                  }
-                >
-                  {(badge) => (
-                    <text
-                      fg={
-                        s().status !== "idle"
-                          ? resolveStatusColor(
-                              context.theme,
-                              s().status,
-                              s().isCurrent,
-                            )
-                          : isRowActive()
-                            ? context.theme.text.muted
-                            : context.theme.text.faint
-                      }
-                      selectable={false}
-                      wrapMode="none"
-                      flexShrink={0}
-                    >
-                      {badge()}
-                    </text>
-                  )}
-                </Show>
               </box>
             </box>
           )

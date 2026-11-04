@@ -1,5 +1,5 @@
-import { createSignal, untrack } from "solid-js";
-import { DEFAULT_PREFERENCES, buildWorkspaceTree, dirBasename, isInvalidWorkspaceRoot, isSubpathOrSame, normalizeDir, parseEditorCommand, resolveWorkspaceNewSessionDirectory } from "../model.js";
+import { createEffect, createRoot, createSignal, untrack } from "solid-js";
+import { DEFAULT_PREFERENCES, buildWorkspaceTree, dirBasename, isInvalidWorkspaceRoot, isSubpathOrSame, normalizeDir, parseEditorCommand, planLeftTabsReconciliation, resolveWorkspaceNewSessionDirectory } from "../model.js";
 import { WorkspacesRpc } from "../rpc.js";
 import { launchParsedEditor, promptPreferredEditor, resolveConfiguredEditor } from "./editor.js";
 const FALLBACK_DISCOVERY_TTL_MS = 15_000;
@@ -30,7 +30,7 @@ export function createWorkspacesController(context) {
       draft.lastSyncedAt ??= 0;
     });
   }
-  if (!Array.isArray(prefs.pinnedProjects) || !Array.isArray(prefs.collapsedProjects) || !Array.isArray(prefs.expandedSidebarWorktrees) || typeof prefs.showAllGitProjects !== "boolean") {
+  if (!Array.isArray(prefs.pinnedProjects) || !Array.isArray(prefs.collapsedProjects) || !Array.isArray(prefs.expandedSidebarWorktrees) || typeof prefs.showAllGitProjects !== "boolean" || prefs.leftTabsMode !== "scoped" && prefs.leftTabsMode !== "grouped" || typeof prefs.tabsByWorktree !== "object" || prefs.tabsByWorktree === null || Array.isArray(prefs.tabsByWorktree)) {
     void setPrefs(draft => {
       if (!Array.isArray(draft.pinnedProjects)) draft.pinnedProjects = [];
       if (!Array.isArray(draft.collapsedProjects)) draft.collapsedProjects = [];
@@ -42,6 +42,12 @@ export function createWorkspacesController(context) {
       }
       if (typeof draft.maxRecentProjects !== "number") {
         draft.maxRecentProjects = defaultMaxRecent;
+      }
+      if (draft.leftTabsMode !== "scoped" && draft.leftTabsMode !== "grouped") {
+        draft.leftTabsMode = "scoped";
+      }
+      if (typeof draft.tabsByWorktree !== "object" || draft.tabsByWorktree === null || Array.isArray(draft.tabsByWorktree)) {
+        draft.tabsByWorktree = {};
       }
     }).catch(() => {});
   }
@@ -201,7 +207,7 @@ export function createWorkspacesController(context) {
         runtimeProjectFilter = new Set([targetProjID]);
       }
     }
-    const sessionRuntime = collectSessionRuntime(sessions, runtimeProjectFilter);
+    const sessionRuntime = options?.skipRuntime ? {} : collectSessionRuntime(sessions, runtimeProjectFilter);
     const mergedGit = {
       ...(cache.gitByDirectory ?? {})
     };
@@ -488,8 +494,40 @@ export function createWorkspacesController(context) {
     context.renderer.off("resize", handleRendererResize);
   }];
   const syncPendingSessionIDs = new Set();
+  const cloneTabsRecord = source => {
+    const out = {};
+    if (!source || typeof source !== "object" || Array.isArray(source)) {
+      return out;
+    }
+    for (const [k, v] of Object.entries(source)) {
+      const norm = normalizeDir(k);
+      if (norm && Array.isArray(v)) {
+        out[norm] = v.filter(id => typeof id === "string" && id.length > 0);
+      }
+    }
+    return out;
+  };
+  const sameTabsRecord = (a, b) => {
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(b);
+    if (aKeys.length !== bKeys.length) return false;
+    for (const key of aKeys) {
+      const av = a[key];
+      const bv = b[key];
+      if (!av || !bv || av.length !== bv.length) return false;
+      for (let i = 0; i < av.length; i++) {
+        if (av[i] !== bv[i]) return false;
+      }
+    }
+    return true;
+  };
+  let savedTabsByWorktreeMem = untrack(() => cloneTabsRecord(prefs.tabsByWorktree));
+  let previousScopedWorktreeDir;
+  let previousTabsMode;
+  let reconcilingTabs = false;
+  const leftTabsMode = () => prefs.leftTabsMode === "grouped" ? "grouped" : "scoped";
   function syncOpenTabLocations() {
-    if (disposed || !context.ui.tabs.enabled()) return;
+    if (disposed || !context.ui.tabs?.enabled()) return;
     for (const tab of context.ui.tabs.list()) {
       const sess = context.data.session.get(tab.sessionID);
       if (!sess) {
@@ -500,6 +538,7 @@ export function createWorkspacesController(context) {
             const loaded = context.data.session.get(tab.sessionID);
             if (loaded && !disposed) {
               ensureLocationSynced(loaded.location, loaded.projectID);
+              reconcileLeftTabs();
             }
           }).catch(() => {
             syncPendingSessionIDs.delete(tab.sessionID);
@@ -510,6 +549,125 @@ export function createWorkspacesController(context) {
       ensureLocationSynced(sess.location, sess.projectID);
     }
   }
+  function reconcileLeftTabs(explicitActiveSessionID) {
+    if (disposed || reconcilingTabs || !context.ui.tabs?.enabled()) return;
+    untrack(() => {
+      syncOpenTabLocations();
+      const openTabs = context.ui.tabs.list();
+      const mode = leftTabsMode();
+      const deleted = deletedSessionIDs();
+      const snap = buildSnapshot({
+        explicitSessionID: explicitActiveSessionID,
+        includeSessionRows: false,
+        skipRuntime: true
+      });
+      const knownSessions = new Map();
+      for (const proj of snap.projects) {
+        for (const wt of proj.worktrees) {
+          for (const s of wt.sessions) {
+            knownSessions.set(s.id, {
+              id: s.id,
+              projectID: proj.id,
+              worktreeDirectory: wt.directory,
+              isCanonicalWorktree: wt.isCanonical,
+              projectPinned: proj.pinned,
+              projectCanonical: proj.canonical,
+              updatedAt: s.updatedAt
+            });
+          }
+        }
+      }
+      const rawActiveRoot = resolveActiveSessionID(explicitActiveSessionID);
+      const activeRoot = rawActiveRoot && !deleted.has(rawActiveRoot) ? rawActiveRoot : undefined;
+      const extraIDs = [...openTabs.map(t => t.sessionID), ...(activeRoot ? [activeRoot] : [])];
+      for (const id of extraIDs) {
+        if (!id || knownSessions.has(id) || deleted.has(id)) continue;
+        const raw = context.data.session.get(id);
+        if (!raw || raw.time.archived) continue;
+        const proj = context.data.project.get(raw.projectID);
+        const normDir = normalizeDir(raw.location.directory);
+        if (!normDir) continue;
+        const normCanon = normalizeDir(proj?.canonical ?? normDir);
+        knownSessions.set(raw.id, {
+          id: raw.id,
+          projectID: raw.projectID,
+          worktreeDirectory: normDir,
+          isCanonicalWorktree: !normCanon || normDir === normCanon,
+          projectPinned: false,
+          projectCanonical: normCanon || normDir,
+          updatedAt: raw.time.updated
+        });
+      }
+      const activeMeta = activeRoot ? knownSessions.get(activeRoot) : undefined;
+      const activeWorktreeDirectory = activeMeta?.worktreeDirectory ?? resolveActiveDirectory(activeRoot);
+      const activeProjectID = activeMeta?.projectID ?? snap.projects.find(p => p.isCurrent)?.id;
+      const plan = planLeftTabsReconciliation({
+        mode,
+        openTabs,
+        knownSessions,
+        deletedSessionIDs: deleted,
+        activeRootSessionID: activeRoot,
+        activeWorktreeDirectory,
+        activeProjectID,
+        showAllGitProjects: Boolean(prefs.showAllGitProjects),
+        previousScopedWorktreeDirectory: previousScopedWorktreeDir,
+        previousMode: previousTabsMode,
+        savedTabsByWorktree: savedTabsByWorktreeMem
+      });
+      previousScopedWorktreeDir = plan.nextScopedWorktreeDirectory;
+      previousTabsMode = mode;
+      if (!sameTabsRecord(savedTabsByWorktreeMem, plan.nextSavedTabsByWorktree)) {
+        savedTabsByWorktreeMem = plan.nextSavedTabsByWorktree;
+        const snapshotToSave = cloneTabsRecord(plan.nextSavedTabsByWorktree);
+        void setPrefs(draft => {
+          draft.tabsByWorktree = snapshotToSave;
+        }).catch(() => {});
+      }
+      if (plan.toOpen.length === 0 && !plan.toFocus && plan.toClose.length === 0 && plan.moves.length === 0) {
+        return;
+      }
+      reconcilingTabs = true;
+      try {
+        for (const id of plan.toOpen) {
+          context.ui.tabs.open(id);
+        }
+        if (plan.toFocus) {
+          const route = context.ui.router.current();
+          const isViewingSubagentChild = route.type === "session" && route.sessionID !== plan.toFocus;
+          if (isViewingSubagentChild) {
+            context.ui.tabs.open(plan.toFocus);
+          } else {
+            context.ui.tabs.focus(plan.toFocus);
+          }
+        }
+        for (const id of plan.toClose) {
+          context.ui.tabs.close(id);
+        }
+        for (const mv of plan.moves) {
+          context.ui.tabs.move(mv.sessionID, mv.index);
+        }
+      } finally {
+        reconcilingTabs = false;
+      }
+    });
+  }
+  const stopTabsWatcher = createRoot(disposeRoot => {
+    createEffect(() => {
+      if (disposed || !context.ui.tabs?.enabled()) return;
+      void context.ui.tabs.list();
+      void context.ui.router.current();
+      void prefs.leftTabsMode;
+      void prefs.showAllGitProjects;
+      void deletedSessionIDs();
+      void context.data.session.list().length;
+      void context.data.project.list().length;
+      void cache.lastSyncedAt;
+      void selectedWorkspace()?.directory;
+      reconcileLeftTabs();
+    });
+    return disposeRoot;
+  });
+  cleanups.push(stopTabsWatcher);
   const syncSessionWorkspace = sessionID => {
     if (disposed || !sessionID) return;
     const rootID = context.data.session.root(sessionID);
@@ -530,6 +688,7 @@ export function createWorkspacesController(context) {
     untrack(() => {
       recordSelectedWorkspace(session.location.directory, session.projectID);
       ensureLocationSynced(session.location, session.projectID);
+      reconcileLeftTabs(rootID);
     });
   };
   cleanups.push(context.data.on("worktree.updated", () => {
@@ -554,7 +713,9 @@ export function createWorkspacesController(context) {
     scheduleRefresh(150);
   }), context.data.on("filesystem.changed", () => scheduleRefresh(400)), context.data.on("session.idle", () => scheduleRefresh(250)), context.data.on("session.moved", event => {
     context.data.session.invalidate(event.data.sessionID);
-    void context.data.session.sync(event.data.sessionID).catch(() => {});
+    void context.data.session.sync(event.data.sessionID).then(() => {
+      if (!disposed) reconcileLeftTabs();
+    }).catch(() => {});
     ensureLocationSynced(event.data.location, event.data.projectID, {
       force: true,
       invalidate: true
@@ -615,19 +776,26 @@ export function createWorkspacesController(context) {
         const synced = context.data.session.get(sessionID);
         if (synced && !disposed) {
           ensureLocationSynced(synced.location, synced.projectID);
+          reconcileLeftTabs();
         }
       }).catch(() => {
         syncPendingSessionIDs.delete(sessionID);
       });
     }
-    if (context.ui.tabs.enabled()) {
-      context.ui.tabs.open(sessionID);
-      context.ui.tabs.focus(sessionID);
+    reconcilingTabs = true;
+    try {
+      context.ui.router.navigate({
+        type: "session",
+        sessionID
+      });
+      if (context.ui.tabs?.enabled()) {
+        context.ui.tabs.open(sessionID);
+        context.ui.tabs.focus(sessionID);
+      }
+    } finally {
+      reconcilingTabs = false;
     }
-    context.ui.router.navigate({
-      type: "session",
-      sessionID
-    });
+    reconcileLeftTabs(sessionID);
   };
   const createSessionInDirectory = async (directory, announceLabel, projectIDHint) => {
     const normDir = normalizeDir(directory);
@@ -750,6 +918,31 @@ export function createWorkspacesController(context) {
       }
       delete draft.gitByDirectory[normRemoved];
     });
+    if (normRemoved) {
+      delete savedTabsByWorktreeMem[normRemoved];
+      if (previousScopedWorktreeDir === normRemoved) {
+        previousScopedWorktreeDir = undefined;
+      }
+      const nextSaved = cloneTabsRecord(savedTabsByWorktreeMem);
+      void setPrefs(draft => {
+        draft.tabsByWorktree = nextSaved;
+      }).catch(() => {});
+      if (context.ui.tabs?.enabled()) {
+        const activeRoot = resolveActiveSessionID();
+        reconcilingTabs = true;
+        try {
+          for (const tab of context.ui.tabs.list()) {
+            if (tab.sessionID === activeRoot) continue;
+            const sess = context.data.session.get(tab.sessionID);
+            if (sess && isSubpathOrSame(normalizeDir(sess.location.directory), normRemoved)) {
+              context.ui.tabs.close(tab.sessionID);
+            }
+          }
+        } finally {
+          reconcilingTabs = false;
+        }
+      }
+    }
   };
   const togglePinProject = async project => {
     const normCanonical = normalizeDir(project.canonical);
@@ -786,6 +979,25 @@ export function createWorkspacesController(context) {
       variant: "info",
       duration: 1800
     });
+  };
+  const setLeftTabsMode = async (nextMode, options) => {
+    const normalized = nextMode === "grouped" ? "grouped" : "scoped";
+    await setPrefs(draft => {
+      draft.leftTabsMode = normalized;
+    }).catch(() => {});
+    reconcileLeftTabs();
+    if (!options?.silent) {
+      context.ui.toast.show({
+        message: normalized === "scoped" ? "Left session tabs: scoped to active worktree" : "Left session tabs: grouped by worktree",
+        variant: "info",
+        duration: 1800
+      });
+    }
+  };
+  const toggleLeftTabsMode = async () => {
+    const nextMode = leftTabsMode() === "scoped" ? "grouped" : "scoped";
+    await setLeftTabsMode(nextMode);
+    return nextMode;
   };
   const createWorktreeFlow = async (project, initialBranch) => {
     const rawInput = initialBranch?.trim() || (await context.ui.dialog.prompt({
@@ -941,7 +1153,6 @@ export function createWorkspacesController(context) {
     }
   };
   const openSessionContextMenu = async (session, worktreeDirectory, projectID) => {
-    const isInTabs = context.ui.tabs.enabled() && context.ui.tabs.list().some(t => t.sessionID === session.id);
     const options = [{
       title: "Delete session",
       value: "delete",
@@ -950,11 +1161,7 @@ export function createWorkspacesController(context) {
       title: "Open session",
       value: "open",
       description: `Switch to "${session.title}"`
-    }, ...(isInTabs ? [{
-      title: "Close tab",
-      value: "close-tab",
-      description: "Close tab without deleting session history"
-    }] : [])];
+    }];
     const action = await context.ui.dialog.select({
       title: session.title,
       placeholder: "Choose session action...",
@@ -962,8 +1169,6 @@ export function createWorkspacesController(context) {
     });
     if (action === "open") {
       activateSession(session.id, worktreeDirectory, projectID);
-    } else if (action === "close-tab") {
-      context.ui.tabs.close(session.id);
     } else if (action === "delete") {
       await removeSessionFlow(session);
     }
@@ -1118,6 +1323,10 @@ export function createWorkspacesController(context) {
     toggleSidebarWorktree,
     togglePinProject,
     toggleShowAllGitProjects,
+    leftTabsMode,
+    setLeftTabsMode,
+    toggleLeftTabsMode,
+    reconcileLeftTabs,
     createWorktreeFlow,
     removeWorktreeFlow,
     removeSessionFlow,

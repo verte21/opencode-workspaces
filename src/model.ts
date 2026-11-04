@@ -15,6 +15,8 @@ export interface GitWorktreeEntry {
   readonly head?: string
 }
 
+export type LeftTabsMode = "scoped" | "grouped"
+
 export interface WorkspacePreferences {
   pinnedProjects: string[]
   collapsedProjects: string[]
@@ -22,6 +24,8 @@ export interface WorkspacePreferences {
   preferredEditor?: string
   showAllGitProjects: boolean
   maxRecentProjects: number
+  leftTabsMode?: LeftTabsMode
+  tabsByWorktree?: Record<string, string[]>
 }
 
 export const DEFAULT_PREFERENCES: WorkspacePreferences = {
@@ -30,6 +34,8 @@ export const DEFAULT_PREFERENCES: WorkspacePreferences = {
   expandedSidebarWorktrees: [],
   showAllGitProjects: false,
   maxRecentProjects: 8,
+  leftTabsMode: "scoped",
+  tabsByWorktree: {},
 }
 
 export interface ProjectInput {
@@ -1058,69 +1064,41 @@ export function resolveWorkspaceNewSessionDirectory(
   return undefined
 }
 
+export const MARQUEE_GAP = "     "
+
 export interface MarqueeTimingOptions {
   readonly holdStartMs?: number
   readonly stepMs?: number
-  readonly holdEndMs?: number
-  readonly returnStepMs?: number
-  readonly betweenCyclesMs?: number
 }
 
 /**
- * Computes horizontal column scroll offset (`0 .. maxScrollX`) for a hovered/focused
- * workspace or session label that overflows its container width.
+ * Computes one-directional horizontal column scroll offset (`0 .. periodCols - 1`)
+ * for a seamless ticker marquee (`"${text}${MARQUEE_GAP}${text}"`).
  *
  * Cycle:
- * 1. Brief initial pause at column 0 (`holdStartMs`)
- * 2. Smooth forward step to `maxScrollX` (`stepMs` per column)
- * 3. Pause at `maxScrollX` so the full suffix is easy to read (`holdEndMs`)
- * 4. Smooth glide back to column 0 (`returnStepMs` per column) + rest (`betweenCyclesMs`)
+ * 1. Brief initial settle pause at column 0 (`holdStartMs`) when first hovered/focused
+ * 2. Continuous one-way advance (`stepMs` per column) wrapping modulo `periodCols`
+ *    so the repeated copy glides into column 0 seamlessly without ever reversing
  */
 export function computeMarqueeScrollX(
   elapsedMs: number,
-  maxScrollX: number,
+  periodCols: number,
   options?: MarqueeTimingOptions,
 ): number {
-  const maxCols = Math.max(0, Math.trunc(maxScrollX))
-  if (maxCols <= 0 || !Number.isFinite(elapsedMs) || elapsedMs <= 0) {
+  const period = Math.max(0, Math.trunc(periodCols))
+  if (period <= 1 || !Number.isFinite(elapsedMs) || elapsedMs <= 0) {
     return 0
   }
 
-  const holdStartMs = options?.holdStartMs ?? 320
-  const stepMs = Math.max(16, options?.stepMs ?? 70)
-  const holdEndMs = options?.holdEndMs ?? 900
-  const returnStepMs = Math.max(16, options?.returnStepMs ?? 45)
-  const betweenCyclesMs = options?.betweenCyclesMs ?? 300
+  const holdStartMs = Math.max(0, options?.holdStartMs ?? 280)
+  const stepMs = Math.max(16, options?.stepMs ?? 65)
 
-  const intermediateCols = Math.max(0, maxCols - 1)
-  const forwardGlideMs = intermediateCols * stepMs
-  const backwardGlideMs = intermediateCols * returnStepMs
-  const cycleMs =
-    holdStartMs + forwardGlideMs + holdEndMs + backwardGlideMs + betweenCyclesMs
-
-  const t = elapsedMs % cycleMs
-
-  if (t < holdStartMs) {
+  if (elapsedMs < holdStartMs) {
     return 0
   }
 
-  const afterStart = t - holdStartMs
-  if (afterStart < forwardGlideMs) {
-    return Math.min(maxCols, 1 + Math.floor(afterStart / stepMs))
-  }
-
-  const afterForward = afterStart - forwardGlideMs
-  if (afterForward < holdEndMs) {
-    return maxCols
-  }
-
-  const afterHoldEnd = afterForward - holdEndMs
-  if (afterHoldEnd < backwardGlideMs) {
-    const stepsBack = 1 + Math.floor(afterHoldEnd / returnStepMs)
-    return Math.max(0, maxCols - stepsBack)
-  }
-
-  return 0
+  const steps = 1 + Math.floor((elapsedMs - holdStartMs) / stepMs)
+  return steps % period
 }
 
 export interface EditorPreset {
@@ -1327,5 +1305,405 @@ export function parseEditorCommand(
     args,
     kind,
     macAppName: MAC_GUI_APP_NAMES[baseName],
+  }
+}
+
+export interface ComposerWorkspaceBadge {
+  readonly primaryText: string
+  readonly gitBadge?: string
+}
+
+/**
+ * Formats a concise, uncapped workspace/branch badge for `session.composer.top`
+ * so long repo names never clip the active worktree/branch in OpenCode's 22-col left bar.
+ */
+export function formatComposerWorkspaceBadge(
+  worktree: Pick<
+    WorktreeNode,
+    "label" | "sublabel" | "branch" | "isCanonical" | "dirtyCount" | "ahead" | "behind"
+  >,
+): ComposerWorkspaceBadge {
+  const branch =
+    worktree.branch || (!worktree.isCanonical ? worktree.label : undefined)
+  let primaryText: string
+  if (worktree.isCanonical) {
+    primaryText = branch ? `⎇ ${branch} · Project sessions` : "Project sessions"
+  } else if (worktree.sublabel && worktree.sublabel !== branch) {
+    primaryText = `⎇ ${branch ?? worktree.label} · ${worktree.sublabel}`
+  } else {
+    primaryText = `⎇ ${branch ?? worktree.label}`
+  }
+
+  const gitParts: string[] = []
+  if (worktree.dirtyCount > 0) gitParts.push(`•${worktree.dirtyCount}`)
+  if (worktree.ahead > 0) gitParts.push(`↑${worktree.ahead}`)
+  if (worktree.behind > 0) gitParts.push(`↓${worktree.behind}`)
+
+  return {
+    primaryText,
+    ...(gitParts.length > 0 ? { gitBadge: gitParts.join(" ") } : {}),
+  }
+}
+
+export const MAX_SCOPED_WORKTREE_TABS = 12
+export const MAX_RESTORED_GROUPED_TABS = 24
+
+export interface LeftTabItemInput {
+  readonly sessionID: string
+  readonly active?: boolean
+}
+
+export interface LeftTabSessionMeta {
+  readonly id: string
+  readonly projectID: string
+  readonly worktreeDirectory: string
+  readonly isCanonicalWorktree: boolean
+  readonly projectPinned: boolean
+  readonly projectCanonical: string
+  readonly updatedAt: number
+}
+
+export interface LeftTabMoveOp {
+  readonly sessionID: string
+  readonly index: number
+}
+
+export interface LeftTabsReconcileInput {
+  readonly mode: LeftTabsMode
+  readonly openTabs: readonly LeftTabItemInput[]
+  readonly knownSessions: ReadonlyMap<string, LeftTabSessionMeta>
+  readonly deletedSessionIDs?: ReadonlySet<string>
+  readonly activeRootSessionID?: string
+  readonly activeWorktreeDirectory?: string
+  readonly activeProjectID?: string
+  readonly showAllGitProjects?: boolean
+  readonly previousScopedWorktreeDirectory?: string
+  readonly previousMode?: LeftTabsMode
+  readonly savedTabsByWorktree: Readonly<Record<string, readonly string[]>>
+}
+
+export interface LeftTabsReconcilePlan {
+  readonly toOpen: readonly string[]
+  readonly toFocus?: string
+  readonly toClose: readonly string[]
+  readonly moves: readonly LeftTabMoveOp[]
+  readonly nextScopedWorktreeDirectory: string | undefined
+  readonly nextSavedTabsByWorktree: Record<string, string[]>
+}
+
+/**
+ * Computes minimal sequential `tabs.move(sessionID, index)` operations to transform
+ * `currentOrder` into `desiredOrder`. Returns `[]` when already ordered.
+ */
+export function computeMinimalTabMoves(
+  currentOrder: readonly string[],
+  desiredOrder: readonly string[],
+): LeftTabMoveOp[] {
+  const desiredSet = new Set(desiredOrder)
+  const sim = currentOrder.filter((id) => desiredSet.has(id))
+  const target = desiredOrder.filter((id) => sim.includes(id))
+  if (
+    sim.length === target.length &&
+    sim.every((id, idx) => id === target[idx])
+  ) {
+    return []
+  }
+
+  const moves: LeftTabMoveOp[] = []
+  for (let i = 0; i < target.length; i++) {
+    const id = target[i]!
+    const curIdx = sim.indexOf(id)
+    if (curIdx >= 0 && curIdx !== i) {
+      moves.push({ sessionID: id, index: i })
+      sim.splice(curIdx, 1)
+      sim.splice(i, 0, id)
+    }
+  }
+  return moves
+}
+
+function dedupeStrings(items: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const item of items) {
+    if (item && !seen.has(item)) {
+      seen.add(item)
+      out.push(item)
+    }
+  }
+  return out
+}
+
+/**
+ * Pure planner for organizing OpenCode's left session tabs (`context.ui.tabs`) in either:
+ * - `"scoped"` mode: swaps the left tab bar to show only the active worktree's sessions,
+ *   remembering open tabs & tab order per worktree without deleting any session history.
+ * - `"grouped"` mode: keeps tabs across worktrees open simultaneously, stably clustered
+ *   by repository and worktree without cursor-jumping on tab clicks.
+ */
+export function planLeftTabsReconciliation(
+  input: LeftTabsReconcileInput,
+): LeftTabsReconcilePlan {
+  const deleted = input.deletedSessionIDs
+  const nextSavedTabsByWorktree: Record<string, string[]> = {}
+
+  for (const [rawDir, ids] of Object.entries(input.savedTabsByWorktree ?? {})) {
+    const normDir = normalizeDir(rawDir)
+    if (!normDir || !Array.isArray(ids)) continue
+    nextSavedTabsByWorktree[normDir] = dedupeStrings(
+      ids.filter((id) => {
+        if (!id || deleted?.has(id)) return false
+        const meta = input.knownSessions.get(id)
+        if (!meta) return true // Keep while session list may still be hydrating
+        return meta.worktreeDirectory === normDir
+      }),
+    )
+  }
+
+  const openByWorktree = new Map<string, string[]>()
+  let hasPendingUnknownOpenTab = false
+  for (const tab of input.openTabs) {
+    if (!tab.sessionID || deleted?.has(tab.sessionID)) continue
+    const meta = input.knownSessions.get(tab.sessionID)
+    if (!meta) {
+      hasPendingUnknownOpenTab = true
+      continue
+    }
+    const list = openByWorktree.get(meta.worktreeDirectory)
+    if (list) {
+      if (!list.includes(tab.sessionID)) list.push(tab.sessionID)
+    } else {
+      openByWorktree.set(meta.worktreeDirectory, [tab.sessionID])
+    }
+  }
+
+  if (input.mode === "scoped") {
+    const activeWt = normalizeDir(input.activeWorktreeDirectory ?? "")
+    const activeRoot = input.activeRootSessionID
+    if (!activeWt || !activeRoot || deleted?.has(activeRoot)) {
+      for (const [wtDir, ids] of openByWorktree.entries()) {
+        nextSavedTabsByWorktree[wtDir] = [...ids]
+      }
+      return {
+        toOpen: [],
+        toClose: [],
+        moves: [],
+        nextScopedWorktreeDirectory: input.previousScopedWorktreeDirectory,
+        nextSavedTabsByWorktree,
+      }
+    }
+
+    const prevScopedWt = input.previousScopedWorktreeDirectory
+      ? normalizeDir(input.previousScopedWorktreeDirectory)
+      : undefined
+    const stayInSameScopedWorktree =
+      input.previousMode === "scoped" && prevScopedWt === activeWt
+
+    for (const [wtDir, ids] of openByWorktree.entries()) {
+      if (wtDir === activeWt) continue
+      if (input.previousMode !== "scoped" || prevScopedWt === wtDir) {
+        nextSavedTabsByWorktree[wtDir] = [...ids]
+      } else {
+        nextSavedTabsByWorktree[wtDir] = dedupeStrings([
+          ...(nextSavedTabsByWorktree[wtDir] ?? []),
+          ...ids,
+        ])
+      }
+    }
+
+    let desiredActiveTabs: string[]
+    const currentlyOpenInActive = openByWorktree.get(activeWt) ?? []
+
+    if (stayInSameScopedWorktree && input.openTabs.length > 0) {
+      desiredActiveTabs = dedupeStrings([...currentlyOpenInActive, activeRoot])
+    } else {
+      const previouslySaved = nextSavedTabsByWorktree[activeWt]
+      if (previouslySaved !== undefined) {
+        const validSaved = previouslySaved.filter((id) => {
+          const meta = input.knownSessions.get(id)
+          return meta !== undefined && meta.worktreeDirectory === activeWt
+        })
+        desiredActiveTabs = dedupeStrings([
+          ...validSaved,
+          ...currentlyOpenInActive,
+          activeRoot,
+        ])
+      } else {
+        const seededFromWorktree = Array.from(input.knownSessions.values())
+          .filter((meta) => meta.worktreeDirectory === activeWt)
+          .sort((a, b) => b.updatedAt - a.updatedAt)
+          .slice(0, MAX_SCOPED_WORKTREE_TABS)
+          .map((meta) => meta.id)
+        desiredActiveTabs = dedupeStrings([
+          ...currentlyOpenInActive,
+          ...seededFromWorktree,
+          activeRoot,
+        ]).slice(0, MAX_SCOPED_WORKTREE_TABS)
+        if (!desiredActiveTabs.includes(activeRoot)) {
+          desiredActiveTabs = [
+            activeRoot,
+            ...desiredActiveTabs.slice(0, MAX_SCOPED_WORKTREE_TABS - 1),
+          ]
+        }
+      }
+    }
+
+    nextSavedTabsByWorktree[activeWt] = [...desiredActiveTabs]
+
+    const openSet = new Set(input.openTabs.map((t) => t.sessionID))
+    const toOpen = desiredActiveTabs.filter((id) => !openSet.has(id))
+    const currentlyActiveTab = input.openTabs.find((t) => t.active)?.sessionID
+    const toFocus =
+      currentlyActiveTab !== activeRoot ? activeRoot : undefined
+
+    const desiredSet = new Set(desiredActiveTabs)
+    const toClose: string[] = []
+    for (const tab of input.openTabs) {
+      const id = tab.sessionID
+      if (!id || id === activeRoot || desiredSet.has(id)) continue
+      const meta = input.knownSessions.get(id)
+      // Only close tabs known to belong to another worktree; never touch unhydrated or deleted tabs
+      if (meta && meta.worktreeDirectory !== activeWt) {
+        toClose.push(id)
+      }
+    }
+
+    let moves: LeftTabMoveOp[] = []
+    if (!hasPendingUnknownOpenTab) {
+      const closedSet = new Set(toClose)
+      const simAfterOpenClose = [
+        ...input.openTabs
+          .map((t) => t.sessionID)
+          .filter((id) => Boolean(id) && !closedSet.has(id) && !deleted?.has(id)),
+        ...toOpen,
+      ]
+      moves = computeMinimalTabMoves(simAfterOpenClose, desiredActiveTabs)
+    }
+
+    return {
+      toOpen,
+      ...(toFocus ? { toFocus } : {}),
+      toClose,
+      moves,
+      nextScopedWorktreeDirectory: activeWt,
+      nextSavedTabsByWorktree,
+    }
+  }
+
+  // `mode === "grouped"`
+  const openSet = new Set(input.openTabs.map((t) => t.sessionID))
+  const toOpen: string[] = []
+
+  if (input.previousMode === "scoped") {
+    const candidates: string[] = []
+    for (const ids of Object.values(nextSavedTabsByWorktree)) {
+      for (const id of ids) {
+        const meta = input.knownSessions.get(id)
+        if (!meta) continue
+        if (
+          !input.showAllGitProjects &&
+          input.activeProjectID &&
+          meta.projectID !== input.activeProjectID
+        ) {
+          continue
+        }
+        candidates.push(id)
+      }
+    }
+    for (const id of dedupeStrings(candidates)) {
+      if (openSet.size + toOpen.length >= MAX_RESTORED_GROUPED_TABS) break
+      if (!openSet.has(id)) {
+        toOpen.push(id)
+      }
+    }
+  }
+
+  const effectiveOpenIDs = dedupeStrings([
+    ...input.openTabs
+      .map((t) => t.sessionID)
+      .filter((id) => Boolean(id) && !deleted?.has(id)),
+    ...toOpen,
+  ])
+
+  const effectiveByWorktree = new Map<string, string[]>()
+  for (const id of effectiveOpenIDs) {
+    const meta = input.knownSessions.get(id)
+    if (!meta) continue
+    const list = effectiveByWorktree.get(meta.worktreeDirectory)
+    if (list) {
+      list.push(id)
+    } else {
+      effectiveByWorktree.set(meta.worktreeDirectory, [id])
+    }
+  }
+
+  if (input.previousMode === "grouped" && effectiveOpenIDs.length > 0) {
+    for (const wtDir of Object.keys(nextSavedTabsByWorktree)) {
+      if (!effectiveByWorktree.has(wtDir)) {
+        nextSavedTabsByWorktree[wtDir] = []
+      }
+    }
+  }
+  for (const [wtDir, ids] of effectiveByWorktree.entries()) {
+    nextSavedTabsByWorktree[wtDir] = [...ids]
+  }
+
+  let moves: LeftTabMoveOp[] = []
+  if (!hasPendingUnknownOpenTab && effectiveOpenIDs.length > 1) {
+    interface WorktreeTabBucket {
+      readonly projectID: string
+      readonly projectCanonical: string
+      readonly projectPinned: boolean
+      readonly worktreeDirectory: string
+      readonly isCanonicalWorktree: boolean
+      readonly sessionIDs: string[]
+    }
+
+    const buckets = new Map<string, WorktreeTabBucket>()
+    for (const id of effectiveOpenIDs) {
+      const meta = input.knownSessions.get(id)
+      if (!meta) continue
+      const key = `${meta.projectID}::${meta.worktreeDirectory}`
+      const existing = buckets.get(key)
+      if (existing) {
+        existing.sessionIDs.push(id)
+      } else {
+        buckets.set(key, {
+          projectID: meta.projectID,
+          projectCanonical: meta.projectCanonical,
+          projectPinned: meta.projectPinned,
+          worktreeDirectory: meta.worktreeDirectory,
+          isCanonicalWorktree: meta.isCanonicalWorktree,
+          sessionIDs: [id],
+        })
+      }
+    }
+
+    const sortedBuckets = Array.from(buckets.values()).sort((a, b) => {
+      if (a.projectPinned !== b.projectPinned) {
+        return a.projectPinned ? -1 : 1
+      }
+      if (a.projectCanonical !== b.projectCanonical) {
+        return a.projectCanonical.localeCompare(b.projectCanonical)
+      }
+      if (a.projectID !== b.projectID) {
+        return a.projectID.localeCompare(b.projectID)
+      }
+      if (a.isCanonicalWorktree !== b.isCanonicalWorktree) {
+        return a.isCanonicalWorktree ? -1 : 1
+      }
+      return a.worktreeDirectory.localeCompare(b.worktreeDirectory)
+    })
+
+    const desiredOrder = sortedBuckets.flatMap((b) => b.sessionIDs)
+    moves = computeMinimalTabMoves(effectiveOpenIDs, desiredOrder)
+  }
+
+  return {
+    toOpen,
+    toClose: [],
+    moves,
+    nextScopedWorktreeDirectory: undefined,
+    nextSavedTabsByWorktree,
   }
 }

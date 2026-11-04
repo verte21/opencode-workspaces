@@ -1,6 +1,6 @@
 import type { Plugin } from "@opencode/plugin/tui";
 import type { Store } from "solid-js/store";
-import { type ProjectNode, type WorkspacePreferences, type WorkspaceSessionNode, type WorkspaceTreeResult, type WorktreeNode } from "../model.js";
+import { type LeftTabsMode, type ProjectNode, type WorkspacePreferences, type WorkspaceSessionNode, type WorkspaceTreeResult, type WorktreeNode } from "../model.js";
 import type { EphemeralWorkspaceCache } from "./types.js";
 export interface WorkspacesController {
     readonly context: Plugin.Context;
@@ -19,6 +19,7 @@ export interface WorkspacesController {
         readonly includeSessionRows?: boolean;
         readonly currentProjectOnly?: boolean;
         readonly onlyRelevantProjects?: boolean;
+        readonly skipRuntime?: boolean;
     }) => WorkspaceTreeResult;
     readonly refreshWorkspacesData: (options?: {
         readonly forceWorktreeRefresh?: boolean;
@@ -42,6 +43,12 @@ export interface WorkspacesController {
         canonical: string;
     }) => Promise<void>;
     readonly toggleShowAllGitProjects: () => Promise<void>;
+    readonly leftTabsMode: () => LeftTabsMode;
+    readonly setLeftTabsMode: (mode: LeftTabsMode, options?: {
+        readonly silent?: boolean;
+    }) => Promise<void>;
+    readonly toggleLeftTabsMode: () => Promise<LeftTabsMode>;
+    readonly reconcileLeftTabs: () => void;
     readonly createWorktreeFlow: (project: {
         id: string;
         name: string;

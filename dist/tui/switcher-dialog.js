@@ -10,10 +10,10 @@ import { createElement as _$createElement } from "@opentui/solid";
 /** @jsxImportSource @opentui/solid */
 import { MouseButton, TextAttributes } from "@opentui/core";
 import { For, Show, createEffect, createMemo, createSignal, onMount } from "solid-js";
-import { dirBasename, filterWorkspaceTreeForSwitcher, formatSwitcherWorktreeLabel, rollupHiddenWorktreeStatus } from "../model.js";
+import { dirBasename, filterWorkspaceTreeForSwitcher, formatSwitcherWorktreeLabel } from "../model.js";
 import { createHoverKeySignal } from "./hover.js";
 import { HoverMarqueeText } from "./marquee.js";
-import { resolveDialogHoverBg, sameStringArray, statusGlyph, statusLabel, worktreeGlyph } from "./types.js";
+import { resolveDialogHoverBg, sameStringArray, statusGlyph, workspaceStatusGlyph, worktreeGlyph } from "./types.js";
 export const WorkspaceSwitcherDialog = props => {
   const {
     ctrl
@@ -192,6 +192,10 @@ export const WorkspaceSwitcherDialog = props => {
       }).catch(() => {});
     }
   };
+  const triggerToggleTabsMode = () => {
+    if (closed || !context.ui.tabs?.enabled()) return;
+    void ctrl.toggleLeftTabsMode();
+  };
   const consumeOnce = (event, fn) => {
     if (closed) return;
     if (event) {
@@ -249,6 +253,9 @@ export const WorkspaceSwitcherDialog = props => {
     }, {
       bind: "ctrl+a",
       run: (_input, event) => consumeOnce(event, () => triggerToggleAll())
+    }, {
+      bind: "ctrl+t",
+      run: (_input, event) => consumeOnce(event, () => triggerToggleTabsMode())
     }]
   }));
   const handleInputKeyDown = event => {
@@ -269,6 +276,9 @@ export const WorkspaceSwitcherDialog = props => {
           return;
         case "a":
           consumeOnce(event, () => triggerToggleAll());
+          return;
+        case "t":
+          consumeOnce(event, () => triggerToggleTabsMode());
           return;
         case "p":
         case "k":
@@ -395,16 +405,16 @@ export const WorkspaceSwitcherDialog = props => {
       },
       get fallback() {
         return (() => {
-          var _el$32 = _$createElement("box"),
-            _el$33 = _$createElement("text");
-          _$insertNode(_el$32, _el$33);
-          _$setProp(_el$32, "paddingX", 3);
-          _$setProp(_el$32, "paddingY", 1);
-          _$setProp(_el$33, "selectable", false);
-          _$setProp(_el$33, "wrapMode", "word");
-          _$insert(_el$33, () => query().trim() ? "No matching branches, worktrees, or sessions." : "No Git worktrees found. Press ctrl+a to browse all repositories or ctrl+n to create a worktree.");
-          _$effect(_$p => _$setProp(_el$33, "fg", dialogTheme.text.muted, _$p));
-          return _el$32;
+          var _el$36 = _$createElement("box"),
+            _el$37 = _$createElement("text");
+          _$insertNode(_el$36, _el$37);
+          _$setProp(_el$36, "paddingX", 3);
+          _$setProp(_el$36, "paddingY", 1);
+          _$setProp(_el$37, "selectable", false);
+          _$setProp(_el$37, "wrapMode", "word");
+          _$insert(_el$37, () => query().trim() ? "No matching branches, worktrees, or sessions." : "No Git worktrees found. Press ctrl+a to browse all repositories or ctrl+n to create a worktree.");
+          _$effect(_$p => _$setProp(_el$37, "fg", dialogTheme.text.muted, _$p));
+          return _el$36;
         })();
       },
       get children() {
@@ -423,33 +433,33 @@ export const WorkspaceSwitcherDialog = props => {
                   equals: sameStringArray
                 });
                 return (() => {
-                  var _el$34 = _$createElement("box"),
-                    _el$35 = _$createElement("box"),
-                    _el$36 = _$createElement("text"),
-                    _el$37 = _$createElement("text"),
-                    _el$38 = _$createTextNode(` `);
-                  _$insertNode(_el$34, _el$35);
-                  _$setProp(_el$34, "flexDirection", "column");
-                  _$setProp(_el$34, "width", "100%");
-                  _$insertNode(_el$35, _el$36);
-                  _$insertNode(_el$35, _el$37);
-                  _$setProp(_el$35, "flexDirection", "row");
-                  _$setProp(_el$35, "justifyContent", "space-between");
-                  _$setProp(_el$35, "alignItems", "center");
-                  _$setProp(_el$35, "paddingX", 3);
-                  _$setProp(_el$35, "width", "100%");
-                  _$setProp(_el$36, "selectable", false);
-                  _$setProp(_el$36, "wrapMode", "none");
-                  _$setProp(_el$36, "truncate", true);
-                  _$setProp(_el$36, "flexShrink", 1);
-                  _$insert(_el$36, () => projGroup().project.pinned ? "★ " : "", null);
-                  _$insert(_el$36, () => projGroup().project.name, null);
-                  _$insertNode(_el$37, _el$38);
-                  _$setProp(_el$37, "selectable", false);
-                  _$setProp(_el$37, "wrapMode", "none");
-                  _$insert(_el$37, () => projGroup().worktrees.length, _el$38);
-                  _$insert(_el$37, () => projGroup().worktrees.length === 1 ? "worktree" : "worktrees", null);
-                  _$insert(_el$34, _$createComponent(For, {
+                  var _el$38 = _$createElement("box"),
+                    _el$39 = _$createElement("box"),
+                    _el$40 = _$createElement("text"),
+                    _el$41 = _$createElement("text"),
+                    _el$42 = _$createTextNode(` `);
+                  _$insertNode(_el$38, _el$39);
+                  _$setProp(_el$38, "flexDirection", "column");
+                  _$setProp(_el$38, "width", "100%");
+                  _$insertNode(_el$39, _el$40);
+                  _$insertNode(_el$39, _el$41);
+                  _$setProp(_el$39, "flexDirection", "row");
+                  _$setProp(_el$39, "justifyContent", "space-between");
+                  _$setProp(_el$39, "alignItems", "center");
+                  _$setProp(_el$39, "paddingX", 3);
+                  _$setProp(_el$39, "width", "100%");
+                  _$setProp(_el$40, "selectable", false);
+                  _$setProp(_el$40, "wrapMode", "none");
+                  _$setProp(_el$40, "truncate", true);
+                  _$setProp(_el$40, "flexShrink", 1);
+                  _$insert(_el$40, () => projGroup().project.pinned ? "★ " : "", null);
+                  _$insert(_el$40, () => projGroup().project.name, null);
+                  _$insertNode(_el$41, _el$42);
+                  _$setProp(_el$41, "selectable", false);
+                  _$setProp(_el$41, "wrapMode", "none");
+                  _$insert(_el$41, () => projGroup().worktrees.length, _el$42);
+                  _$insert(_el$41, () => projGroup().worktrees.length === 1 ? "worktree" : "worktrees", null);
+                  _$insert(_el$38, _$createComponent(For, {
                     get each() {
                       return wtKeys();
                     },
@@ -462,37 +472,34 @@ export const WorkspaceSwitcherDialog = props => {
                         children: wtGroup => {
                           const wt = () => wtGroup().worktree;
                           const displayLabel = createMemo(() => formatSwitcherWorktreeLabel(wt()));
-                          const hiddenRollup = createMemo(() => rollupHiddenWorktreeStatus(wt(), wtGroup().sessions));
-                          const rowStatus = () => hiddenRollup().status;
-                          const rowStatusDetail = () => hiddenRollup().detail;
                           const isWtSelected = () => selectedRow()?.key === wtKey;
                           const sessionIDs = createMemo(() => wtGroup().sessions.map(s => s.id), [], {
                             equals: sameStringArray
                           });
                           return (() => {
-                            var _el$39 = _$createElement("box"),
-                              _el$40 = _$createElement("box"),
-                              _el$41 = _$createElement("box"),
-                              _el$42 = _$createElement("text"),
-                              _el$43 = _$createElement("box"),
+                            var _el$43 = _$createElement("box"),
                               _el$44 = _$createElement("box"),
-                              _el$45 = _$createElement("text");
-                            _$insertNode(_el$39, _el$40);
-                            _$setProp(_el$39, "flexDirection", "column");
-                            _$setProp(_el$39, "width", "100%");
-                            _$insertNode(_el$40, _el$41);
-                            _$insertNode(_el$40, _el$43);
+                              _el$45 = _$createElement("box"),
+                              _el$46 = _$createElement("text"),
+                              _el$47 = _$createElement("box"),
+                              _el$48 = _$createElement("box"),
+                              _el$49 = _$createElement("text");
+                            _$insertNode(_el$43, _el$44);
+                            _$setProp(_el$43, "flexDirection", "column");
+                            _$setProp(_el$43, "width", "100%");
+                            _$insertNode(_el$44, _el$45);
+                            _$insertNode(_el$44, _el$47);
                             _$use(el => {
                               if (el) rowRefs.set(wtKey, el);else rowRefs.delete(wtKey);
-                            }, _el$40);
-                            _$setProp(_el$40, "flexDirection", "row");
-                            _$setProp(_el$40, "justifyContent", "space-between");
-                            _$setProp(_el$40, "alignItems", "center");
-                            _$setProp(_el$40, "width", "100%");
-                            _$setProp(_el$40, "paddingX", 3);
-                            _$setProp(_el$40, "onMouseOver", () => rowHover.onEnter(wtKey));
-                            _$setProp(_el$40, "onMouseOut", () => rowHover.onLeave(wtKey));
-                            _$setProp(_el$40, "onMouseUp", event => {
+                            }, _el$44);
+                            _$setProp(_el$44, "flexDirection", "row");
+                            _$setProp(_el$44, "justifyContent", "space-between");
+                            _$setProp(_el$44, "alignItems", "center");
+                            _$setProp(_el$44, "width", "100%");
+                            _$setProp(_el$44, "paddingX", 3);
+                            _$setProp(_el$44, "onMouseOver", () => rowHover.onEnter(wtKey));
+                            _$setProp(_el$44, "onMouseOut", () => rowHover.onLeave(wtKey));
+                            _$setProp(_el$44, "onMouseUp", event => {
                               if (event.button !== undefined && event.button !== MouseButton.LEFT) {
                                 return;
                               }
@@ -505,16 +512,16 @@ export const WorkspaceSwitcherDialog = props => {
                                 directlyMatched: wtGroup().directlyMatched
                               });
                             });
-                            _$insertNode(_el$41, _el$42);
-                            _$setProp(_el$41, "flexDirection", "row");
-                            _$setProp(_el$41, "columnGap", 1);
-                            _$setProp(_el$41, "flexGrow", 1);
-                            _$setProp(_el$41, "flexShrink", 1);
-                            _$setProp(_el$41, "overflow", "hidden");
-                            _$setProp(_el$42, "selectable", false);
-                            _$setProp(_el$42, "wrapMode", "none");
-                            _$insert(_el$42, () => worktreeGlyph(rowStatus(), wt().isCurrent));
-                            _$insert(_el$41, _$createComponent(HoverMarqueeText, {
+                            _$insertNode(_el$45, _el$46);
+                            _$setProp(_el$45, "flexDirection", "row");
+                            _$setProp(_el$45, "columnGap", 1);
+                            _$setProp(_el$45, "flexGrow", 1);
+                            _$setProp(_el$45, "flexShrink", 1);
+                            _$setProp(_el$45, "overflow", "hidden");
+                            _$setProp(_el$46, "selectable", false);
+                            _$setProp(_el$46, "wrapMode", "none");
+                            _$insert(_el$46, () => worktreeGlyph(wt().isCurrent));
+                            _$insert(_el$45, _$createComponent(HoverMarqueeText, {
                               renderer: getRenderer,
                               get text() {
                                 return displayLabel().title;
@@ -530,17 +537,17 @@ export const WorkspaceSwitcherDialog = props => {
                               },
                               flexShrink: 1
                             }), null);
-                            _$insert(_el$41, _$createComponent(Show, {
+                            _$insert(_el$45, _$createComponent(Show, {
                               get when() {
                                 return displayLabel().subtitle;
                               },
                               children: sub => (() => {
-                                var _el$52 = _$createElement("box");
-                                _$setProp(_el$52, "paddingLeft", 1);
-                                _$setProp(_el$52, "flexShrink", 2);
-                                _$setProp(_el$52, "overflow", "hidden");
-                                _$setProp(_el$52, "shouldFill", false);
-                                _$insert(_el$52, _$createComponent(HoverMarqueeText, {
+                                var _el$56 = _$createElement("box");
+                                _$setProp(_el$56, "paddingLeft", 1);
+                                _$setProp(_el$56, "flexShrink", 2);
+                                _$setProp(_el$56, "overflow", "hidden");
+                                _$setProp(_el$56, "shouldFill", false);
+                                _$insert(_el$56, _$createComponent(HoverMarqueeText, {
                                   renderer: getRenderer,
                                   get text() {
                                     return sub();
@@ -553,15 +560,15 @@ export const WorkspaceSwitcherDialog = props => {
                                   },
                                   flexShrink: 2
                                 }));
-                                return _el$52;
+                                return _el$56;
                               })()
                             }), null);
-                            _$insertNode(_el$43, _el$44);
-                            _$setProp(_el$43, "flexDirection", "row");
-                            _$setProp(_el$43, "columnGap", 1);
-                            _$setProp(_el$43, "flexShrink", 0);
-                            _$insertNode(_el$44, _el$45);
-                            _$setProp(_el$44, "onMouseUp", event => {
+                            _$insertNode(_el$47, _el$48);
+                            _$setProp(_el$47, "flexDirection", "row");
+                            _$setProp(_el$47, "columnGap", 1);
+                            _$setProp(_el$47, "flexShrink", 0);
+                            _$insertNode(_el$48, _el$49);
+                            _$setProp(_el$48, "onMouseUp", event => {
                               if (!(isWtSelected() || hoveredKey() === wtKey)) {
                                 return;
                               }
@@ -572,68 +579,77 @@ export const WorkspaceSwitcherDialog = props => {
                               const curWt = wt();
                               void ctrl.createSessionInDirectory(curWt.directory, `Started session in ${dirBasename(curWt.directory)}`, projGroup().project.id);
                             });
-                            _$setProp(_el$45, "selectable", false);
-                            _$setProp(_el$45, "wrapMode", "none");
-                            _$insert(_el$45, () => isWtSelected() || hoveredKey() === wtKey ? "+ new" : "     ");
-                            _$insert(_el$43, _$createComponent(Show, {
+                            _$setProp(_el$49, "selectable", false);
+                            _$setProp(_el$49, "wrapMode", "none");
+                            _$insert(_el$49, () => isWtSelected() || hoveredKey() === wtKey ? "+ new" : "     ");
+                            _$insert(_el$47, _$createComponent(Show, {
                               get when() {
-                                return statusLabel(rowStatus(), rowStatusDetail());
+                                return workspaceStatusGlyph(wt().status);
                               },
                               children: badge => (() => {
-                                var _el$53 = _$createElement("text");
-                                _$setProp(_el$53, "selectable", false);
-                                _$setProp(_el$53, "wrapMode", "none");
-                                _$insert(_el$53, badge);
-                                _$effect(_$p => _$setProp(_el$53, "fg", isWtSelected() ? focusedRowText : dialogStatusColor(rowStatus(), wt().isCurrent), _$p));
-                                return _el$53;
+                                var _el$57 = _$createElement("text");
+                                _$setProp(_el$57, "selectable", false);
+                                _$setProp(_el$57, "wrapMode", "none");
+                                _$insert(_el$57, badge);
+                                _$effect(_p$ => {
+                                  var _v$28 = isWtSelected() ? focusedRowText : dialogStatusColor(wt().status, wt().isCurrent),
+                                    _v$29 = TextAttributes.BOLD;
+                                  _v$28 !== _p$.e && (_p$.e = _$setProp(_el$57, "fg", _v$28, _p$.e));
+                                  _v$29 !== _p$.t && (_p$.t = _$setProp(_el$57, "attributes", _v$29, _p$.t));
+                                  return _p$;
+                                }, {
+                                  e: undefined,
+                                  t: undefined
+                                });
+                                return _el$57;
                               })()
                             }), null);
-                            _$insert(_el$43, _$createComponent(Show, {
+                            _$insert(_el$47, _$createComponent(Show, {
                               get when() {
                                 return wt().dirtyCount > 0;
                               },
                               get children() {
-                                var _el$46 = _$createElement("text"),
-                                  _el$47 = _$createTextNode(`~`);
-                                _$insertNode(_el$46, _el$47);
-                                _$setProp(_el$46, "selectable", false);
-                                _$setProp(_el$46, "wrapMode", "none");
-                                _$insert(_el$46, () => wt().dirtyCount, null);
-                                _$effect(_$p => _$setProp(_el$46, "fg", isWtSelected() ? focusedRowText : dialogTheme.text.muted, _$p));
-                                return _el$46;
+                                var _el$50 = _$createElement("text"),
+                                  _el$51 = _$createTextNode(`~`);
+                                _$insertNode(_el$50, _el$51);
+                                _$setProp(_el$50, "selectable", false);
+                                _$setProp(_el$50, "wrapMode", "none");
+                                _$insert(_el$50, () => wt().dirtyCount, null);
+                                _$effect(_$p => _$setProp(_el$50, "fg", isWtSelected() ? focusedRowText : dialogTheme.text.muted, _$p));
+                                return _el$50;
                               }
                             }), null);
-                            _$insert(_el$43, _$createComponent(Show, {
+                            _$insert(_el$47, _$createComponent(Show, {
                               get when() {
                                 return wt().ahead > 0;
                               },
                               get children() {
-                                var _el$48 = _$createElement("text"),
-                                  _el$49 = _$createTextNode(`↑`);
-                                _$insertNode(_el$48, _el$49);
-                                _$setProp(_el$48, "selectable", false);
-                                _$setProp(_el$48, "wrapMode", "none");
-                                _$insert(_el$48, () => wt().ahead, null);
-                                _$effect(_$p => _$setProp(_el$48, "fg", isWtSelected() ? focusedRowText : dialogTheme.text.faint, _$p));
-                                return _el$48;
+                                var _el$52 = _$createElement("text"),
+                                  _el$53 = _$createTextNode(`↑`);
+                                _$insertNode(_el$52, _el$53);
+                                _$setProp(_el$52, "selectable", false);
+                                _$setProp(_el$52, "wrapMode", "none");
+                                _$insert(_el$52, () => wt().ahead, null);
+                                _$effect(_$p => _$setProp(_el$52, "fg", isWtSelected() ? focusedRowText : dialogTheme.text.faint, _$p));
+                                return _el$52;
                               }
                             }), null);
-                            _$insert(_el$43, _$createComponent(Show, {
+                            _$insert(_el$47, _$createComponent(Show, {
                               get when() {
                                 return wt().behind > 0;
                               },
                               get children() {
-                                var _el$50 = _$createElement("text"),
-                                  _el$51 = _$createTextNode(`↓`);
-                                _$insertNode(_el$50, _el$51);
-                                _$setProp(_el$50, "selectable", false);
-                                _$setProp(_el$50, "wrapMode", "none");
-                                _$insert(_el$50, () => wt().behind, null);
-                                _$effect(_$p => _$setProp(_el$50, "fg", isWtSelected() ? focusedRowText : dialogTheme.text.faint, _$p));
-                                return _el$50;
+                                var _el$54 = _$createElement("text"),
+                                  _el$55 = _$createTextNode(`↓`);
+                                _$insertNode(_el$54, _el$55);
+                                _$setProp(_el$54, "selectable", false);
+                                _$setProp(_el$54, "wrapMode", "none");
+                                _$insert(_el$54, () => wt().behind, null);
+                                _$effect(_$p => _$setProp(_el$54, "fg", isWtSelected() ? focusedRowText : dialogTheme.text.faint, _$p));
+                                return _el$54;
                               }
                             }), null);
-                            _$insert(_el$39, _$createComponent(For, {
+                            _$insert(_el$43, _$createComponent(For, {
                               get each() {
                                 return sessionIDs();
                               },
@@ -647,25 +663,23 @@ export const WorkspaceSwitcherDialog = props => {
                                     return sessionAccessor();
                                   },
                                   children: session => (() => {
-                                    var _el$54 = _$createElement("box"),
-                                      _el$55 = _$createElement("box"),
-                                      _el$56 = _$createElement("text"),
-                                      _el$57 = _$createElement("text"),
-                                      _el$58 = _$createElement("box");
-                                    _$insertNode(_el$54, _el$55);
-                                    _$insertNode(_el$54, _el$58);
+                                    var _el$58 = _$createElement("box"),
+                                      _el$59 = _$createElement("box"),
+                                      _el$60 = _$createElement("text"),
+                                      _el$61 = _$createElement("text");
+                                    _$insertNode(_el$58, _el$59);
                                     _$use(el => {
                                       if (el) rowRefs.set(sessKey, el);else rowRefs.delete(sessKey);
-                                    }, _el$54);
-                                    _$setProp(_el$54, "flexDirection", "row");
-                                    _$setProp(_el$54, "justifyContent", "space-between");
-                                    _$setProp(_el$54, "alignItems", "center");
-                                    _$setProp(_el$54, "width", "100%");
-                                    _$setProp(_el$54, "paddingLeft", 5);
-                                    _$setProp(_el$54, "paddingRight", 3);
-                                    _$setProp(_el$54, "onMouseOver", () => rowHover.onEnter(sessKey));
-                                    _$setProp(_el$54, "onMouseOut", () => rowHover.onLeave(sessKey));
-                                    _$setProp(_el$54, "onMouseUp", event => {
+                                    }, _el$58);
+                                    _$setProp(_el$58, "flexDirection", "row");
+                                    _$setProp(_el$58, "justifyContent", "space-between");
+                                    _$setProp(_el$58, "alignItems", "center");
+                                    _$setProp(_el$58, "width", "100%");
+                                    _$setProp(_el$58, "paddingLeft", 5);
+                                    _$setProp(_el$58, "paddingRight", 3);
+                                    _$setProp(_el$58, "onMouseOver", () => rowHover.onEnter(sessKey));
+                                    _$setProp(_el$58, "onMouseOut", () => rowHover.onLeave(sessKey));
+                                    _$setProp(_el$58, "onMouseUp", event => {
                                       setSelectedKey(sessKey);
                                       if (event.button === MouseButton.RIGHT) {
                                         event.stopPropagation();
@@ -692,20 +706,20 @@ export const WorkspaceSwitcherDialog = props => {
                                         directlyMatched: false
                                       });
                                     });
-                                    _$insertNode(_el$55, _el$56);
-                                    _$insertNode(_el$55, _el$57);
-                                    _$setProp(_el$55, "flexDirection", "row");
-                                    _$setProp(_el$55, "columnGap", 1);
-                                    _$setProp(_el$55, "flexGrow", 1);
-                                    _$setProp(_el$55, "flexShrink", 1);
-                                    _$setProp(_el$55, "overflow", "hidden");
-                                    _$setProp(_el$56, "selectable", false);
-                                    _$setProp(_el$56, "wrapMode", "none");
-                                    _$insert(_el$56, () => isLast() ? "└─" : "├─");
-                                    _$setProp(_el$57, "selectable", false);
-                                    _$setProp(_el$57, "wrapMode", "none");
-                                    _$insert(_el$57, () => statusGlyph(session().status, session().isCurrent));
-                                    _$insert(_el$55, _$createComponent(HoverMarqueeText, {
+                                    _$insertNode(_el$59, _el$60);
+                                    _$insertNode(_el$59, _el$61);
+                                    _$setProp(_el$59, "flexDirection", "row");
+                                    _$setProp(_el$59, "columnGap", 1);
+                                    _$setProp(_el$59, "flexGrow", 1);
+                                    _$setProp(_el$59, "flexShrink", 1);
+                                    _$setProp(_el$59, "overflow", "hidden");
+                                    _$setProp(_el$60, "selectable", false);
+                                    _$setProp(_el$60, "wrapMode", "none");
+                                    _$insert(_el$60, () => isLast() ? "└─" : "├─");
+                                    _$setProp(_el$61, "selectable", false);
+                                    _$setProp(_el$61, "wrapMode", "none");
+                                    _$insert(_el$61, () => statusGlyph(session().status, session().isCurrent));
+                                    _$insert(_el$59, _$createComponent(HoverMarqueeText, {
                                       renderer: getRenderer,
                                       get text() {
                                         return session().title;
@@ -721,51 +735,35 @@ export const WorkspaceSwitcherDialog = props => {
                                       },
                                       flexShrink: 1
                                     }), null);
-                                    _$setProp(_el$58, "flexDirection", "row");
-                                    _$setProp(_el$58, "columnGap", 1);
-                                    _$setProp(_el$58, "flexShrink", 0);
-                                    _$insert(_el$58, _$createComponent(Show, {
-                                      get when() {
-                                        return statusLabel(session().status, session().statusDetail) ?? (session().isCurrent ? "active" : undefined);
-                                      },
-                                      children: badge => (() => {
-                                        var _el$59 = _$createElement("text");
-                                        _$setProp(_el$59, "selectable", false);
-                                        _$setProp(_el$59, "wrapMode", "none");
-                                        _$insert(_el$59, badge);
-                                        _$effect(_$p => _$setProp(_el$59, "fg", isSessSelected() ? focusedRowText : session().status !== "idle" ? dialogStatusColor(session().status, session().isCurrent) : dialogTheme.text.faint, _$p));
-                                        return _el$59;
-                                      })()
-                                    }));
                                     _$effect(_p$ => {
-                                      var _v$26 = rowBg(sessKey),
-                                        _v$27 = isSessSelected() ? focusedRowText : dialogTheme.text.faint,
-                                        _v$28 = isSessSelected() ? focusedRowText : dialogStatusColor(session().status, session().isCurrent);
-                                      _v$26 !== _p$.e && (_p$.e = _$setProp(_el$54, "backgroundColor", _v$26, _p$.e));
-                                      _v$27 !== _p$.t && (_p$.t = _$setProp(_el$56, "fg", _v$27, _p$.t));
-                                      _v$28 !== _p$.a && (_p$.a = _$setProp(_el$57, "fg", _v$28, _p$.a));
+                                      var _v$30 = rowBg(sessKey),
+                                        _v$31 = isSessSelected() ? focusedRowText : dialogTheme.text.faint,
+                                        _v$32 = isSessSelected() ? focusedRowText : dialogStatusColor(session().status, session().isCurrent);
+                                      _v$30 !== _p$.e && (_p$.e = _$setProp(_el$58, "backgroundColor", _v$30, _p$.e));
+                                      _v$31 !== _p$.t && (_p$.t = _$setProp(_el$60, "fg", _v$31, _p$.t));
+                                      _v$32 !== _p$.a && (_p$.a = _$setProp(_el$61, "fg", _v$32, _p$.a));
                                       return _p$;
                                     }, {
                                       e: undefined,
                                       t: undefined,
                                       a: undefined
                                     });
-                                    return _el$54;
+                                    return _el$58;
                                   })()
                                 });
                               }
                             }), null);
                             _$effect(_p$ => {
-                              var _v$21 = wtIdx() > 0 ? 1 : 0,
-                                _v$22 = rowBg(wtKey),
-                                _v$23 = isWtSelected() ? focusedRowText : dialogStatusColor(rowStatus(), wt().isCurrent),
-                                _v$24 = TextAttributes.BOLD,
-                                _v$25 = isWtSelected() ? focusedRowText : dialogTheme.text.action.primary.selected;
-                              _v$21 !== _p$.e && (_p$.e = _$setProp(_el$39, "marginTop", _v$21, _p$.e));
-                              _v$22 !== _p$.t && (_p$.t = _$setProp(_el$40, "backgroundColor", _v$22, _p$.t));
-                              _v$23 !== _p$.a && (_p$.a = _$setProp(_el$42, "fg", _v$23, _p$.a));
-                              _v$24 !== _p$.o && (_p$.o = _$setProp(_el$42, "attributes", _v$24, _p$.o));
-                              _v$25 !== _p$.i && (_p$.i = _$setProp(_el$45, "fg", _v$25, _p$.i));
+                              var _v$23 = wtIdx() > 0 ? 1 : 0,
+                                _v$24 = rowBg(wtKey),
+                                _v$25 = isWtSelected() ? focusedRowText : wt().isCurrent ? dialogTheme.text.action.primary.selected : dialogTheme.text.faint,
+                                _v$26 = TextAttributes.BOLD,
+                                _v$27 = isWtSelected() ? focusedRowText : dialogTheme.text.action.primary.selected;
+                              _v$23 !== _p$.e && (_p$.e = _$setProp(_el$43, "marginTop", _v$23, _p$.e));
+                              _v$24 !== _p$.t && (_p$.t = _$setProp(_el$44, "backgroundColor", _v$24, _p$.t));
+                              _v$25 !== _p$.a && (_p$.a = _$setProp(_el$46, "fg", _v$25, _p$.a));
+                              _v$26 !== _p$.o && (_p$.o = _$setProp(_el$46, "attributes", _v$26, _p$.o));
+                              _v$27 !== _p$.i && (_p$.i = _$setProp(_el$49, "fg", _v$27, _p$.i));
                               return _p$;
                             }, {
                               e: undefined,
@@ -774,21 +772,21 @@ export const WorkspaceSwitcherDialog = props => {
                               o: undefined,
                               i: undefined
                             });
-                            return _el$39;
+                            return _el$43;
                           })();
                         }
                       });
                     }
                   }), null);
                   _$effect(_p$ => {
-                    var _v$17 = projIdx() > 0 ? 1 : 0,
-                      _v$18 = dialogTheme.hue.accent[400],
-                      _v$19 = TextAttributes.BOLD,
-                      _v$20 = dialogTheme.text.faint;
-                    _v$17 !== _p$.e && (_p$.e = _$setProp(_el$34, "marginTop", _v$17, _p$.e));
-                    _v$18 !== _p$.t && (_p$.t = _$setProp(_el$36, "fg", _v$18, _p$.t));
-                    _v$19 !== _p$.a && (_p$.a = _$setProp(_el$36, "attributes", _v$19, _p$.a));
-                    _v$20 !== _p$.o && (_p$.o = _$setProp(_el$37, "fg", _v$20, _p$.o));
+                    var _v$19 = projIdx() > 0 ? 1 : 0,
+                      _v$20 = dialogTheme.hue.accent[400],
+                      _v$21 = TextAttributes.BOLD,
+                      _v$22 = dialogTheme.text.faint;
+                    _v$19 !== _p$.e && (_p$.e = _$setProp(_el$38, "marginTop", _v$19, _p$.e));
+                    _v$20 !== _p$.t && (_p$.t = _$setProp(_el$40, "fg", _v$20, _p$.t));
+                    _v$21 !== _p$.a && (_p$.a = _$setProp(_el$40, "attributes", _v$21, _p$.a));
+                    _v$22 !== _p$.o && (_p$.o = _$setProp(_el$41, "fg", _v$22, _p$.o));
                     return _p$;
                   }, {
                     e: undefined,
@@ -796,7 +794,7 @@ export const WorkspaceSwitcherDialog = props => {
                     a: undefined,
                     o: undefined
                   });
-                  return _el$34;
+                  return _el$38;
                 })();
               }
             });
@@ -894,39 +892,72 @@ export const WorkspaceSwitcherDialog = props => {
     _$insertNode(_el$30, _$createTextNode(`ctrl+a`));
     _$setProp(_el$30, "selectable", false);
     _$setProp(_el$30, "wrapMode", "none");
+    _$insert(_el$0, _$createComponent(Show, {
+      get when() {
+        return Boolean(context.ui.tabs?.enabled());
+      },
+      get children() {
+        var _el$32 = _$createElement("box"),
+          _el$33 = _$createElement("text"),
+          _el$34 = _$createElement("text");
+        _$insertNode(_el$32, _el$33);
+        _$insertNode(_el$32, _el$34);
+        _$setProp(_el$32, "flexDirection", "column");
+        _$setProp(_el$32, "onMouseOver", () => footerHover.onEnter("tabs"));
+        _$setProp(_el$32, "onMouseOut", () => footerHover.onLeave("tabs"));
+        _$setProp(_el$32, "onMouseUp", () => triggerToggleTabsMode());
+        _$setProp(_el$33, "selectable", false);
+        _$setProp(_el$33, "wrapMode", "none");
+        _$insert(_el$33, () => ctrl.leftTabsMode() === "grouped" ? "tabs: grouped" : "tabs: worktree");
+        _$insertNode(_el$34, _$createTextNode(`ctrl+t`));
+        _$setProp(_el$34, "selectable", false);
+        _$setProp(_el$34, "wrapMode", "none");
+        _$effect(_p$ => {
+          var _v$3 = hoveredFooterAction() === "tabs" ? dialogTheme.text.action.primary.selected : footerTheme.text.base,
+            _v$4 = footerTheme.text.muted;
+          _v$3 !== _p$.e && (_p$.e = _$setProp(_el$33, "fg", _v$3, _p$.e));
+          _v$4 !== _p$.t && (_p$.t = _$setProp(_el$34, "fg", _v$4, _p$.t));
+          return _p$;
+        }, {
+          e: undefined,
+          t: undefined
+        });
+        return _el$32;
+      }
+    }), null);
     _$effect(_p$ => {
-      var _v$3 = dialogTheme.text.base,
-        _v$4 = TextAttributes.BOLD,
-        _v$5 = dialogTheme.text.muted,
-        _v$6 = query(),
-        _v$7 = dialogTheme.text.base,
-        _v$8 = dialogTheme.text.base,
-        _v$9 = dialogTheme.text.faint,
-        _v$0 = dialogTheme.text.formfield.focused,
-        _v$1 = hoveredFooterAction() === "worktree" ? dialogTheme.text.action.primary.selected : footerTheme.text.base,
-        _v$10 = footerTheme.text.muted,
-        _v$11 = hoveredFooterAction() === "session" ? dialogTheme.text.action.primary.selected : footerTheme.text.base,
+      var _v$5 = dialogTheme.text.base,
+        _v$6 = TextAttributes.BOLD,
+        _v$7 = dialogTheme.text.muted,
+        _v$8 = query(),
+        _v$9 = dialogTheme.text.base,
+        _v$0 = dialogTheme.text.base,
+        _v$1 = dialogTheme.text.faint,
+        _v$10 = dialogTheme.text.formfield.focused,
+        _v$11 = hoveredFooterAction() === "worktree" ? dialogTheme.text.action.primary.selected : footerTheme.text.base,
         _v$12 = footerTheme.text.muted,
-        _v$13 = hoveredFooterAction() === "editor" ? dialogTheme.text.action.primary.selected : footerTheme.text.base,
+        _v$13 = hoveredFooterAction() === "session" ? dialogTheme.text.action.primary.selected : footerTheme.text.base,
         _v$14 = footerTheme.text.muted,
-        _v$15 = hoveredFooterAction() === "all" ? dialogTheme.text.action.primary.selected : footerTheme.text.base,
-        _v$16 = footerTheme.text.muted;
-      _v$3 !== _p$.e && (_p$.e = _$setProp(_el$3, "fg", _v$3, _p$.e));
-      _v$4 !== _p$.t && (_p$.t = _$setProp(_el$3, "attributes", _v$4, _p$.t));
-      _v$5 !== _p$.a && (_p$.a = _$setProp(_el$4, "fg", _v$5, _p$.a));
-      _v$6 !== _p$.o && (_p$.o = _$setProp(_el$7, "value", _v$6, _p$.o));
-      _v$7 !== _p$.i && (_p$.i = _$setProp(_el$7, "textColor", _v$7, _p$.i));
-      _v$8 !== _p$.n && (_p$.n = _$setProp(_el$7, "focusedTextColor", _v$8, _p$.n));
-      _v$9 !== _p$.s && (_p$.s = _$setProp(_el$7, "placeholderColor", _v$9, _p$.s));
-      _v$0 !== _p$.h && (_p$.h = _$setProp(_el$7, "cursorColor", _v$0, _p$.h));
-      _v$1 !== _p$.r && (_p$.r = _$setProp(_el$10, "fg", _v$1, _p$.r));
-      _v$10 !== _p$.d && (_p$.d = _$setProp(_el$12, "fg", _v$10, _p$.d));
-      _v$11 !== _p$.l && (_p$.l = _$setProp(_el$15, "fg", _v$11, _p$.l));
-      _v$12 !== _p$.u && (_p$.u = _$setProp(_el$17, "fg", _v$12, _p$.u));
-      _v$13 !== _p$.c && (_p$.c = _$setProp(_el$20, "fg", _v$13, _p$.c));
-      _v$14 !== _p$.w && (_p$.w = _$setProp(_el$22, "fg", _v$14, _p$.w));
-      _v$15 !== _p$.m && (_p$.m = _$setProp(_el$29, "fg", _v$15, _p$.m));
-      _v$16 !== _p$.f && (_p$.f = _$setProp(_el$30, "fg", _v$16, _p$.f));
+        _v$15 = hoveredFooterAction() === "editor" ? dialogTheme.text.action.primary.selected : footerTheme.text.base,
+        _v$16 = footerTheme.text.muted,
+        _v$17 = hoveredFooterAction() === "all" ? dialogTheme.text.action.primary.selected : footerTheme.text.base,
+        _v$18 = footerTheme.text.muted;
+      _v$5 !== _p$.e && (_p$.e = _$setProp(_el$3, "fg", _v$5, _p$.e));
+      _v$6 !== _p$.t && (_p$.t = _$setProp(_el$3, "attributes", _v$6, _p$.t));
+      _v$7 !== _p$.a && (_p$.a = _$setProp(_el$4, "fg", _v$7, _p$.a));
+      _v$8 !== _p$.o && (_p$.o = _$setProp(_el$7, "value", _v$8, _p$.o));
+      _v$9 !== _p$.i && (_p$.i = _$setProp(_el$7, "textColor", _v$9, _p$.i));
+      _v$0 !== _p$.n && (_p$.n = _$setProp(_el$7, "focusedTextColor", _v$0, _p$.n));
+      _v$1 !== _p$.s && (_p$.s = _$setProp(_el$7, "placeholderColor", _v$1, _p$.s));
+      _v$10 !== _p$.h && (_p$.h = _$setProp(_el$7, "cursorColor", _v$10, _p$.h));
+      _v$11 !== _p$.r && (_p$.r = _$setProp(_el$10, "fg", _v$11, _p$.r));
+      _v$12 !== _p$.d && (_p$.d = _$setProp(_el$12, "fg", _v$12, _p$.d));
+      _v$13 !== _p$.l && (_p$.l = _$setProp(_el$15, "fg", _v$13, _p$.l));
+      _v$14 !== _p$.u && (_p$.u = _$setProp(_el$17, "fg", _v$14, _p$.u));
+      _v$15 !== _p$.c && (_p$.c = _$setProp(_el$20, "fg", _v$15, _p$.c));
+      _v$16 !== _p$.w && (_p$.w = _$setProp(_el$22, "fg", _v$16, _p$.w));
+      _v$17 !== _p$.m && (_p$.m = _$setProp(_el$29, "fg", _v$17, _p$.m));
+      _v$18 !== _p$.f && (_p$.f = _$setProp(_el$30, "fg", _v$18, _p$.f));
       return _p$;
     }, {
       e: undefined,

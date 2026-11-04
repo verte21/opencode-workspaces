@@ -12,7 +12,6 @@ import {
   dirBasename,
   filterWorkspaceTreeForSwitcher,
   formatSwitcherWorktreeLabel,
-  rollupHiddenWorktreeStatus,
   type AgentStatus,
   type SwitcherSelectableRow,
 } from "../model.js"
@@ -23,7 +22,7 @@ import {
   resolveDialogHoverBg,
   sameStringArray,
   statusGlyph,
-  statusLabel,
+  workspaceStatusGlyph,
   worktreeGlyph,
 } from "./types.js"
 
@@ -247,6 +246,11 @@ export const WorkspaceSwitcherDialog = (props: {
     }
   }
 
+  const triggerToggleTabsMode = () => {
+    if (closed || !context.ui.tabs?.enabled()) return
+    void ctrl.toggleLeftTabsMode()
+  }
+
   const consumeOnce = (event: KeyEvent | undefined, fn: () => void) => {
     if (closed) return
     if (event) {
@@ -327,6 +331,11 @@ export const WorkspaceSwitcherDialog = (props: {
         run: (_input, event) =>
           consumeOnce(event, () => triggerToggleAll()),
       },
+      {
+        bind: "ctrl+t",
+        run: (_input, event) =>
+          consumeOnce(event, () => triggerToggleTabsMode()),
+      },
     ],
   }))
 
@@ -349,6 +358,9 @@ export const WorkspaceSwitcherDialog = (props: {
           return
         case "a":
           consumeOnce(event, () => triggerToggleAll())
+          return
+        case "t":
+          consumeOnce(event, () => triggerToggleTabsMode())
           return
         case "p":
         case "k":
@@ -542,15 +554,6 @@ export const WorkspaceSwitcherDialog = (props: {
                                     const displayLabel = createMemo(() =>
                                       formatSwitcherWorktreeLabel(wt()),
                                     )
-                                    const hiddenRollup = createMemo(() =>
-                                      rollupHiddenWorktreeStatus(
-                                        wt(),
-                                        wtGroup().sessions,
-                                      ),
-                                    )
-                                    const rowStatus = () => hiddenRollup().status
-                                    const rowStatusDetail = () =>
-                                      hiddenRollup().detail
                                     const isWtSelected = () =>
                                       selectedRow()?.key === wtKey
                                     const sessionIDs = createMemo(
@@ -612,19 +615,16 @@ export const WorkspaceSwitcherDialog = (props: {
                                               fg={
                                                 isWtSelected()
                                                   ? focusedRowText
-                                                  : dialogStatusColor(
-                                                      rowStatus(),
-                                                      wt().isCurrent,
-                                                    )
+                                                  : wt().isCurrent
+                                                    ? dialogTheme.text.action
+                                                        .primary.selected
+                                                    : dialogTheme.text.faint
                                               }
                                               attributes={TextAttributes.BOLD}
                                               selectable={false}
                                               wrapMode="none"
                                             >
-                                              {worktreeGlyph(
-                                                rowStatus(),
-                                                wt().isCurrent,
-                                              )}
+                                              {worktreeGlyph(wt().isCurrent)}
                                             </text>
                                             <HoverMarqueeText
                                               renderer={getRenderer}
@@ -716,9 +716,8 @@ export const WorkspaceSwitcherDialog = (props: {
                                               </text>
                                             </box>
                                             <Show
-                                              when={statusLabel(
-                                                rowStatus(),
-                                                rowStatusDetail(),
+                                              when={workspaceStatusGlyph(
+                                                wt().status,
                                               )}
                                             >
                                               {(badge) => (
@@ -727,9 +726,12 @@ export const WorkspaceSwitcherDialog = (props: {
                                                     isWtSelected()
                                                       ? focusedRowText
                                                       : dialogStatusColor(
-                                                          rowStatus(),
+                                                          wt().status,
                                                           wt().isCurrent,
                                                         )
+                                                  }
+                                                  attributes={
+                                                    TextAttributes.BOLD
                                                   }
                                                   selectable={false}
                                                   wrapMode="none"
@@ -937,50 +939,6 @@ export const WorkspaceSwitcherDialog = (props: {
                                                         flexShrink={1}
                                                       />
                                                     </box>
-
-                                                    <box
-                                                      flexDirection="row"
-                                                      columnGap={1}
-                                                      flexShrink={0}
-                                                    >
-                                                      <Show
-                                                        when={
-                                                          statusLabel(
-                                                            session().status,
-                                                            session()
-                                                              .statusDetail,
-                                                          ) ??
-                                                          (session().isCurrent
-                                                            ? "active"
-                                                            : undefined)
-                                                        }
-                                                      >
-                                                        {(badge) => (
-                                                          <text
-                                                            fg={
-                                                              isSessSelected()
-                                                                ? focusedRowText
-                                                                : session()
-                                                                      .status !==
-                                                                    "idle"
-                                                                  ? dialogStatusColor(
-                                                                      session()
-                                                                        .status,
-                                                                      session()
-                                                                        .isCurrent,
-                                                                    )
-                                                                  : dialogTheme
-                                                                      .text
-                                                                      .faint
-                                                            }
-                                                            selectable={false}
-                                                            wrapMode="none"
-                                                          >
-                                                            {badge()}
-                                                          </text>
-                                                        )}
-                                                      </Show>
-                                                    </box>
                                                   </box>
                                                 )}
                                               </Show>
@@ -1124,6 +1082,31 @@ export const WorkspaceSwitcherDialog = (props: {
             ctrl+a
           </text>
         </box>
+        <Show when={Boolean(context.ui.tabs?.enabled())}>
+          <box
+            flexDirection="column"
+            onMouseOver={() => footerHover.onEnter("tabs")}
+            onMouseOut={() => footerHover.onLeave("tabs")}
+            onMouseUp={() => triggerToggleTabsMode()}
+          >
+            <text
+              fg={
+                hoveredFooterAction() === "tabs"
+                  ? dialogTheme.text.action.primary.selected
+                  : footerTheme.text.base
+              }
+              selectable={false}
+              wrapMode="none"
+            >
+              {ctrl.leftTabsMode() === "grouped"
+                ? "tabs: grouped"
+                : "tabs: worktree"}
+            </text>
+            <text fg={footerTheme.text.muted} selectable={false} wrapMode="none">
+              ctrl+t
+            </text>
+          </box>
+        </Show>
       </box>
     </box>
   )

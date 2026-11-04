@@ -1,7 +1,6 @@
 import type { Plugin } from "@opencode/plugin/tui"
 import type {
   AgentStatus,
-  AgentStatusDetail,
   GitSummary,
   GitWorktreeEntry,
 } from "../model.js"
@@ -28,11 +27,8 @@ export interface EphemeralWorkspaceCache {
   lastSyncedAt: number
 }
 
-export function worktreeGlyph(status: AgentStatus, isCurrent: boolean): string {
-  if (status === "blocked") return "!"
-  if (status === "working") return "●"
-  if (isCurrent) return "▸"
-  return "○"
+export function worktreeGlyph(isCurrent: boolean): string {
+  return isCurrent ? "▸" : "○"
 }
 
 export function statusGlyph(status: AgentStatus, isCurrent: boolean): string {
@@ -42,14 +38,13 @@ export function statusGlyph(status: AgentStatus, isCurrent: boolean): string {
   return "·"
 }
 
-export function statusLabel(
-  status: AgentStatus,
-  detail?: AgentStatusDetail,
-): string | undefined {
-  if (status === "blocked") {
-    return detail === "permission" ? "perm" : "ask"
-  }
-  if (status === "working") return "busy"
+/**
+ * General workspace-level status indicator shown on worktree rows (folded or unfolded),
+ * distinct from individual session icons (`!` / `●`).
+ */
+export function workspaceStatusGlyph(status: AgentStatus): string | undefined {
+  if (status === "blocked") return "⚠"
+  if (status === "working") return "◉"
   return undefined
 }
 

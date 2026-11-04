@@ -5,16 +5,20 @@ import {
   aggregateStatus,
   buildWorkspaceTree,
   computeMarqueeScrollX,
+  computeMinimalTabMoves,
   computeSessionStatus,
   filterWorkspaceTreeForSwitcher,
+  formatComposerWorkspaceBadge,
   formatSwitcherWorktreeLabel,
   isInvalidWorkspaceRoot,
   matchSessionWorktree,
   parseEditorCommand,
   parseGitPorcelainBranchStatus,
   parseGitWorktreePorcelain,
+  planLeftTabsReconciliation,
   resolveWorkspaceNewSessionDirectory,
   rollupHiddenWorktreeStatus,
+  type LeftTabSessionMeta,
 } from "../src/model.js"
 import { WorkspacesRpc } from "../src/rpc.js"
 
@@ -622,36 +626,29 @@ describe("resolveWorkspaceNewSessionDirectory", () => {
 })
 
 describe("computeMarqueeScrollX", () => {
-  test("returns 0 when text fits (maxScrollX <= 0) or during initial start hold", () => {
+  test("returns 0 when period <= 1 or during initial start hold", () => {
     expect(computeMarqueeScrollX(500, 0)).toBe(0)
+    expect(computeMarqueeScrollX(500, 1)).toBe(0)
     expect(computeMarqueeScrollX(0, 12)).toBe(0)
-    expect(computeMarqueeScrollX(319, 12)).toBe(0)
+    expect(computeMarqueeScrollX(279, 12)).toBe(0)
   })
 
-  test("smoothly advances from 1 to maxScrollX, holds at the end, and glides back to 0", () => {
+  test("scrolls continuously in one direction and wraps modulo periodCols without reversing", () => {
     const opts = {
-      holdStartMs: 300,
+      holdStartMs: 250,
       stepMs: 50,
-      holdEndMs: 500,
-      returnStepMs: 40,
-      betweenCyclesMs: 200,
     }
-    // maxScrollX = 4 -> intermediateCols = 3 -> forwardGlide = 150ms (300..450)
-    expect(computeMarqueeScrollX(300, 4, opts)).toBe(1)
-    expect(computeMarqueeScrollX(350, 4, opts)).toBe(2)
-    expect(computeMarqueeScrollX(400, 4, opts)).toBe(3)
-    // End hold: 450..950 -> stays at 4 so full suffix is readable
-    expect(computeMarqueeScrollX(450, 4, opts)).toBe(4)
-    expect(computeMarqueeScrollX(949, 4, opts)).toBe(4)
-    // Return glide: 950..1070 -> steps 3, 2, 1
-    expect(computeMarqueeScrollX(950, 4, opts)).toBe(3)
-    expect(computeMarqueeScrollX(990, 4, opts)).toBe(2)
-    expect(computeMarqueeScrollX(1030, 4, opts)).toBe(1)
-    // Between cycles + next cycle start hold -> 0
-    expect(computeMarqueeScrollX(1070, 4, opts)).toBe(0)
-    expect(computeMarqueeScrollX(1269, 4, opts)).toBe(0)
-    // Loops cleanly into next cycle
-    expect(computeMarqueeScrollX(1270 + 300, 4, opts)).toBe(1)
+    // periodCols = 6 (e.g. text + gap): steps 1, 2, 3, 4, 5, 0, 1, 2...
+    expect(computeMarqueeScrollX(249, 6, opts)).toBe(0)
+    expect(computeMarqueeScrollX(250, 6, opts)).toBe(1)
+    expect(computeMarqueeScrollX(300, 6, opts)).toBe(2)
+    expect(computeMarqueeScrollX(350, 6, opts)).toBe(3)
+    expect(computeMarqueeScrollX(400, 6, opts)).toBe(4)
+    expect(computeMarqueeScrollX(450, 6, opts)).toBe(5)
+    // Seamless wrap directly from 5 -> 0 -> 1 (never glides backward 5 -> 4 -> 3)
+    expect(computeMarqueeScrollX(500, 6, opts)).toBe(0)
+    expect(computeMarqueeScrollX(550, 6, opts)).toBe(1)
+    expect(computeMarqueeScrollX(600, 6, opts)).toBe(2)
   })
 })
 
@@ -719,5 +716,271 @@ describe("parseEditorCommand", () => {
       directories: ["/repo", "/repo/wt-1"],
       rootDirectories: ["/repo"],
     })
+  })
+})
+
+describe("formatComposerWorkspaceBadge", () => {
+  test("formats canonical checkout, secondary worktrees, and git status badges cleanly", () => {
+    expect(
+      formatComposerWorkspaceBadge({
+        label: "Project sessions",
+        sublabel: "⎇ main",
+        branch: "main",
+        isCanonical: true,
+        dirtyCount: 3,
+        ahead: 1,
+        behind: 2,
+      }),
+    ).toEqual({
+      primaryText: "⎇ main · Project sessions",
+      gitBadge: "•3 ↑1 ↓2",
+    })
+
+    expect(
+      formatComposerWorkspaceBadge({
+        label: "test/workspace-1",
+        sublabel: "workspace-1",
+        branch: "test/workspace-1",
+        isCanonical: false,
+        dirtyCount: 0,
+        ahead: 0,
+        behind: 0,
+      }),
+    ).toEqual({
+      primaryText: "⎇ test/workspace-1 · workspace-1",
+    })
+
+    expect(
+      formatComposerWorkspaceBadge({
+        label: "feat-auth",
+        branch: "feat-auth",
+        isCanonical: false,
+        dirtyCount: 0,
+        ahead: 0,
+        behind: 0,
+      }),
+    ).toEqual({
+      primaryText: "⎇ feat-auth",
+    })
+  })
+})
+
+describe("planLeftTabsReconciliation & computeMinimalTabMoves", () => {
+  const repoCanon = "/repo/opencode-workspaces"
+  const wt1 = "/repo/opencode-workspaces/test-workspaces/workspace-1"
+  const wt2 = "/repo/opencode-workspaces/test-workspaces/workspace-2"
+
+  const makeKnown = (): Map<string, LeftTabSessionMeta> =>
+    new Map([
+      [
+        "main-1",
+        {
+          id: "main-1",
+          projectID: "proj-1",
+          worktreeDirectory: repoCanon,
+          isCanonicalWorktree: true,
+          projectPinned: false,
+          projectCanonical: repoCanon,
+          updatedAt: 100,
+        },
+      ],
+      [
+        "main-2",
+        {
+          id: "main-2",
+          projectID: "proj-1",
+          worktreeDirectory: repoCanon,
+          isCanonicalWorktree: true,
+          projectPinned: false,
+          projectCanonical: repoCanon,
+          updatedAt: 90,
+        },
+      ],
+      [
+        "wt1-1",
+        {
+          id: "wt1-1",
+          projectID: "proj-1",
+          worktreeDirectory: wt1,
+          isCanonicalWorktree: false,
+          projectPinned: false,
+          projectCanonical: repoCanon,
+          updatedAt: 200,
+        },
+      ],
+      [
+        "wt1-2",
+        {
+          id: "wt1-2",
+          projectID: "proj-1",
+          worktreeDirectory: wt1,
+          isCanonicalWorktree: false,
+          projectPinned: false,
+          projectCanonical: repoCanon,
+          updatedAt: 150,
+        },
+      ],
+      [
+        "wt2-1",
+        {
+          id: "wt2-1",
+          projectID: "proj-1",
+          worktreeDirectory: wt2,
+          isCanonicalWorktree: false,
+          projectPinned: false,
+          projectCanonical: repoCanon,
+          updatedAt: 180,
+        },
+      ],
+    ])
+
+  test("computeMinimalTabMoves transforms shuffled tabs into desired order with zero moves when already ordered", () => {
+    expect(computeMinimalTabMoves(["a", "b", "c"], ["a", "b", "c"])).toEqual([])
+
+    const current = ["wt1-1", "main-1", "wt1-2", "main-2"]
+    const desired = ["main-1", "main-2", "wt1-1", "wt1-2"]
+    const moves = computeMinimalTabMoves(current, desired)
+    expect(moves.length).toBeGreaterThan(0)
+
+    const sim = [...current]
+    for (const mv of moves) {
+      const idx = sim.indexOf(mv.sessionID)
+      sim.splice(idx, 1)
+      sim.splice(mv.index, 0, mv.sessionID)
+    }
+    expect(sim).toEqual(desired)
+  })
+
+  test("scoped mode swaps tabs per worktree, remembers closed tabs, and preserves unhydrated tabs", () => {
+    const known = makeKnown()
+
+    // 1. Entering wt1 from mixed open tabs [main-1, main-2, wt1-1, unhydrated-tab]:
+    //    saves main's tabs, seeds wt1's [wt1-1, wt1-2], closes main's tabs, and leaves unhydrated-tab untouched!
+    const step1 = planLeftTabsReconciliation({
+      mode: "scoped",
+      openTabs: [
+        { sessionID: "main-1", active: false },
+        { sessionID: "main-2", active: false },
+        { sessionID: "wt1-1", active: true },
+        { sessionID: "unhydrated-tab", active: false },
+      ],
+      knownSessions: known,
+      activeRootSessionID: "wt1-1",
+      activeWorktreeDirectory: wt1,
+      activeProjectID: "proj-1",
+      savedTabsByWorktree: {},
+    })
+
+    expect(step1.toOpen).toEqual(["wt1-2"])
+    expect(step1.toClose).toEqual(["main-1", "main-2"])
+    expect(step1.toFocus).toBeUndefined()
+    expect(step1.nextSavedTabsByWorktree[repoCanon]).toEqual([
+      "main-1",
+      "main-2",
+    ])
+    expect(step1.nextSavedTabsByWorktree[wt1]).toEqual(["wt1-1", "wt1-2"])
+
+    // 2. User closes 'wt1-2' while staying inside wt1 -> does NOT resurrect 'wt1-2'
+    const step2 = planLeftTabsReconciliation({
+      mode: "scoped",
+      openTabs: [{ sessionID: "wt1-1", active: true }],
+      knownSessions: known,
+      activeRootSessionID: "wt1-1",
+      activeWorktreeDirectory: wt1,
+      activeProjectID: "proj-1",
+      previousMode: "scoped",
+      previousScopedWorktreeDirectory: step1.nextScopedWorktreeDirectory,
+      savedTabsByWorktree: step1.nextSavedTabsByWorktree,
+    })
+
+    expect(step2.toOpen).toEqual([])
+    expect(step2.toClose).toEqual([])
+    expect(step2.nextSavedTabsByWorktree[wt1]).toEqual(["wt1-1"])
+
+    // 3. Switch to main -> restores [main-1, main-2] and closes [wt1-1]
+    const step3 = planLeftTabsReconciliation({
+      mode: "scoped",
+      openTabs: [
+        { sessionID: "wt1-1", active: false },
+        { sessionID: "main-1", active: true },
+      ],
+      knownSessions: known,
+      activeRootSessionID: "main-1",
+      activeWorktreeDirectory: repoCanon,
+      activeProjectID: "proj-1",
+      previousMode: "scoped",
+      previousScopedWorktreeDirectory: step2.nextScopedWorktreeDirectory,
+      savedTabsByWorktree: step2.nextSavedTabsByWorktree,
+    })
+
+    expect(step3.toOpen).toEqual(["main-2"])
+    expect(step3.toClose).toEqual(["wt1-1"])
+
+    // 4. Switch back to wt1 -> restores only ['wt1-1'] (respects user closing 'wt1-2')
+    const step4 = planLeftTabsReconciliation({
+      mode: "scoped",
+      openTabs: [
+        { sessionID: "main-1", active: false },
+        { sessionID: "main-2", active: false },
+        { sessionID: "wt1-1", active: true },
+      ],
+      knownSessions: known,
+      activeRootSessionID: "wt1-1",
+      activeWorktreeDirectory: wt1,
+      activeProjectID: "proj-1",
+      previousMode: "scoped",
+      previousScopedWorktreeDirectory: step3.nextScopedWorktreeDirectory,
+      savedTabsByWorktree: step3.nextSavedTabsByWorktree,
+    })
+
+    expect(step4.toOpen).toEqual([])
+    expect(step4.toClose).toEqual(["main-1", "main-2"])
+  })
+
+  test("grouped mode restores saved tabs when toggled from scoped and clusters stably by worktree without cursor-jumping", () => {
+    const known = makeKnown()
+
+    const grouped = planLeftTabsReconciliation({
+      mode: "grouped",
+      openTabs: [{ sessionID: "wt2-1", active: true }],
+      knownSessions: known,
+      activeRootSessionID: "wt2-1",
+      activeWorktreeDirectory: wt2,
+      activeProjectID: "proj-1",
+      previousMode: "scoped",
+      previousScopedWorktreeDirectory: wt2,
+      savedTabsByWorktree: {
+        [wt2]: ["wt2-1"],
+        [repoCanon]: ["main-2", "main-1"],
+        [wt1]: ["wt1-1"],
+      },
+    })
+
+    expect(grouped.toClose).toEqual([])
+    expect(grouped.toOpen).toEqual(["main-2", "main-1", "wt1-1"])
+
+    // Simulate applying `toOpen` + `moves`
+    const sim = ["wt2-1", ...grouped.toOpen]
+    for (const mv of grouped.moves) {
+      const idx = sim.indexOf(mv.sessionID)
+      sim.splice(idx, 1)
+      sim.splice(mv.index, 0, mv.sessionID)
+    }
+    // Canonical first (preserving [main-2, main-1] relative order), then wt1, then wt2!
+    expect(sim).toEqual(["main-2", "main-1", "wt1-1", "wt2-1"])
+
+    // Clicking another tab (e.g. main-2) in grouped mode produces ZERO moves (no cursor jumping!)
+    const afterClick = planLeftTabsReconciliation({
+      mode: "grouped",
+      openTabs: sim.map((id) => ({ sessionID: id, active: id === "main-2" })),
+      knownSessions: known,
+      activeRootSessionID: "main-2",
+      activeWorktreeDirectory: repoCanon,
+      activeProjectID: "proj-1",
+      previousMode: "grouped",
+      savedTabsByWorktree: grouped.nextSavedTabsByWorktree,
+    })
+    expect(afterClick.toOpen).toEqual([])
+    expect(afterClick.moves).toEqual([])
   })
 })
