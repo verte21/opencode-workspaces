@@ -1,5 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import {
+  MouseButton,
   TextAttributes,
   type BoxRenderable,
   type InputRenderable,
@@ -10,6 +11,7 @@ import { For, Show, createEffect, createMemo, createSignal, onMount } from "soli
 import {
   dirBasename,
   filterWorkspaceTreeForSwitcher,
+  formatSwitcherWorktreeLabel,
   rollupHiddenWorktreeStatus,
   type AgentStatus,
   type SwitcherSelectableRow,
@@ -156,7 +158,9 @@ export const WorkspaceSwitcherDialog = (props: {
 
   const canRemoveSelected = createMemo(() => {
     const row = selectedRow()
-    return Boolean(row && !row.worktree.isCanonical)
+    if (!row) return false
+    if (row.kind === "session") return true
+    return !row.worktree.isCanonical
   })
 
   const moveSelection = (delta: number) => {
@@ -222,9 +226,15 @@ export const WorkspaceSwitcherDialog = (props: {
     void ctrl.openWorktreeInEditor(dir)
   }
 
-  const triggerRemoveWorktree = () => {
+  const triggerRemoveSelected = () => {
     const row = selectedRow()
-    if (!row || row.worktree.isCanonical || !closeDialog()) return
+    if (!row) return
+    if (row.kind === "session") {
+      if (!closeDialog()) return
+      void ctrl.removeSessionFlow(row.session)
+      return
+    }
+    if (row.worktree.isCanonical || !closeDialog()) return
     void ctrl.removeWorktreeFlow(row.project, row.worktree)
   }
 
@@ -310,7 +320,7 @@ export const WorkspaceSwitcherDialog = (props: {
       {
         bind: "ctrl+x",
         run: (_input, event) =>
-          consumeOnce(event, () => triggerRemoveWorktree()),
+          consumeOnce(event, () => triggerRemoveSelected()),
       },
       {
         bind: "ctrl+a",
@@ -335,7 +345,7 @@ export const WorkspaceSwitcherDialog = (props: {
           consumeOnce(event, () => triggerOpenEditor())
           return
         case "x":
-          consumeOnce(event, () => triggerRemoveWorktree())
+          consumeOnce(event, () => triggerRemoveSelected())
           return
         case "a":
           consumeOnce(event, () => triggerToggleAll())
@@ -529,6 +539,9 @@ export const WorkspaceSwitcherDialog = (props: {
                                 <Show when={wtGroupAccessor()}>
                                   {(wtGroup) => {
                                     const wt = () => wtGroup().worktree
+                                    const displayLabel = createMemo(() =>
+                                      formatSwitcherWorktreeLabel(wt()),
+                                    )
                                     const hiddenRollup = createMemo(() =>
                                       rollupHiddenWorktreeStatus(
                                         wt(),
@@ -570,7 +583,13 @@ export const WorkspaceSwitcherDialog = (props: {
                                           onMouseOut={() =>
                                             rowHover.onLeave(wtKey)
                                           }
-                                          onMouseUp={() => {
+                                          onMouseUp={(event) => {
+                                            if (
+                                              event.button !== undefined &&
+                                              event.button !== MouseButton.LEFT
+                                            ) {
+                                              return
+                                            }
                                             setSelectedKey(wtKey)
                                             activateSwitcherRow({
                                               kind: "worktree",
@@ -609,7 +628,7 @@ export const WorkspaceSwitcherDialog = (props: {
                                             </text>
                                             <HoverMarqueeText
                                               renderer={getRenderer}
-                                              text={wt().label}
+                                              text={displayLabel().title}
                                               active={
                                                 isWtSelected() ||
                                                 hoveredKey() === wtKey
@@ -622,22 +641,33 @@ export const WorkspaceSwitcherDialog = (props: {
                                               attributes={TextAttributes.BOLD}
                                               flexShrink={1}
                                             />
-                                            <Show when={wt().sublabel}>
+                                            <Show when={displayLabel().subtitle}>
                                               {(sub) => (
-                                                <HoverMarqueeText
-                                                  renderer={getRenderer}
-                                                  text={sub()}
-                                                  active={
-                                                    isWtSelected() ||
-                                                    hoveredKey() === wtKey
-                                                  }
-                                                  fg={
-                                                    isWtSelected()
-                                                      ? focusedRowText
-                                                      : dialogTheme.text.faint
-                                                  }
+                                                <box
+                                                  paddingLeft={1}
                                                   flexShrink={2}
-                                                />
+                                                  overflow="hidden"
+                                                  shouldFill={false}
+                                                >
+                                                  <HoverMarqueeText
+                                                    renderer={getRenderer}
+                                                    text={sub()}
+                                                    active={
+                                                      isWtSelected() ||
+                                                      hoveredKey() === wtKey
+                                                    }
+                                                    fg={
+                                                      isWtSelected()
+                                                        ? focusedRowText
+                                                        : wt().isCanonical
+                                                          ? dialogTheme.text
+                                                              .muted
+                                                          : dialogTheme.text
+                                                              .faint
+                                                    }
+                                                    flexShrink={2}
+                                                  />
+                                                </box>
                                               )}
                                             </Show>
                                           </box>
@@ -791,8 +821,36 @@ export const WorkspaceSwitcherDialog = (props: {
                                                     onMouseOut={() =>
                                                       rowHover.onLeave(sessKey)
                                                     }
-                                                    onMouseUp={() => {
+                                                    onMouseUp={(event) => {
                                                       setSelectedKey(sessKey)
+                                                      if (
+                                                        event.button ===
+                                                        MouseButton.RIGHT
+                                                      ) {
+                                                        event.stopPropagation()
+                                                        const curSess =
+                                                          session()
+                                                        const curWt = wt()
+                                                        const projID =
+                                                          projGroup().project.id
+                                                        if (!closeDialog()) {
+                                                          return
+                                                        }
+                                                        void ctrl.openSessionContextMenu(
+                                                          curSess,
+                                                          curWt.directory,
+                                                          projID,
+                                                        )
+                                                        return
+                                                      }
+                                                      if (
+                                                        event.button !==
+                                                          undefined &&
+                                                        event.button !==
+                                                          MouseButton.LEFT
+                                                      ) {
+                                                        return
+                                                      }
                                                       const matchedRow =
                                                         filtered().selectableRows.find(
                                                           (r) =>
@@ -1023,7 +1081,7 @@ export const WorkspaceSwitcherDialog = (props: {
             flexDirection="column"
             onMouseOver={() => footerHover.onEnter("remove")}
             onMouseOut={() => footerHover.onLeave("remove")}
-            onMouseUp={() => triggerRemoveWorktree()}
+            onMouseUp={() => triggerRemoveSelected()}
           >
             <text
               fg={
@@ -1034,7 +1092,7 @@ export const WorkspaceSwitcherDialog = (props: {
               selectable={false}
               wrapMode="none"
             >
-              remove
+              {selectedRow()?.kind === "session" ? "delete session" : "remove"}
             </text>
             <text
               fg={footerTheme.text.muted}

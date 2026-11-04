@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Schema } from "effect"
 import {
   DEFAULT_PREFERENCES,
   aggregateStatus,
@@ -6,6 +7,7 @@ import {
   computeMarqueeScrollX,
   computeSessionStatus,
   filterWorkspaceTreeForSwitcher,
+  formatSwitcherWorktreeLabel,
   isInvalidWorkspaceRoot,
   matchSessionWorktree,
   parseEditorCommand,
@@ -363,20 +365,84 @@ describe("buildWorkspaceTree", () => {
     ])
     expect(tree.projects[0]!.worktrees[1]!.isCurrent).toBe(true)
   })
+
+  test("preserves nested worktree sessions on OpenCode v2 startup before async worktree discovery completes", () => {
+    const tree = buildWorkspaceTree({
+      projects: [
+        {
+          id: "opencode-workspaces",
+          canonical: "/code/opencode-workspaces",
+          vcs: "git",
+          sandboxes: [],
+          time: { created: 1, updated: 500 },
+        },
+      ],
+      sessions: [
+        {
+          id: "sess-main",
+          projectID: "opencode-workspaces",
+          title: "Main session",
+          time: { created: 1, updated: 10 },
+          location: { directory: "/code/opencode-workspaces" },
+        },
+        {
+          id: "sess-nested-wt",
+          projectID: "opencode-workspaces",
+          title: "Nested worktree session",
+          time: { created: 2, updated: 20 },
+          location: {
+            directory: "/code/opencode-workspaces/test-workspaces/workspace-1",
+          },
+        },
+      ],
+      sessionRuntime: {},
+      worktreesByProject: {},
+      gitWorktreesByRoot: {},
+      gitByDirectory: {},
+      prefs: DEFAULT_PREFERENCES,
+      currentSessionID: "sess-nested-wt",
+      currentDirectory: "/code/opencode-workspaces/test-workspaces/workspace-1",
+      currentProjectOnly: true,
+    })
+
+    expect(tree.projects).toHaveLength(1)
+    const wts = tree.projects[0]!.worktrees
+    expect(wts.map((w) => w.directory)).toEqual([
+      "/code/opencode-workspaces",
+      "/code/opencode-workspaces/test-workspaces/workspace-1",
+    ])
+    expect(wts[0]!.isCurrent).toBe(false)
+    expect(wts[1]!.isCurrent).toBe(true)
+    expect(wts[1]!.label).toBe("workspace-1")
+  })
 })
 
 describe("WorkspacesRpc schema validation", () => {
-  test("validates input and output via StandardSchemaV1", () => {
+  test("validates input and output via StandardSchemaV1 and encodes cleanly as Effect Schema.Json", () => {
+    const encodeJson = Schema.encodeUnknownSync(Schema.Json)
+    const emptySummary = parseGitPorcelainBranchStatus("")
+    const normalSummary = parseGitPorcelainBranchStatus("## main\n M file.ts\n")
+    const wtList = parseGitWorktreePorcelain("worktree /code/alpha\ndetached\n")
+
+    expect(() => encodeJson(emptySummary as any)).not.toThrow()
+    expect(() => encodeJson(normalSummary as any)).not.toThrow()
+    expect(() => encodeJson(wtList as any)).not.toThrow()
+
     const outSchema = WorkspacesRpc.methods.inspectLocations.output
     const valid = outSchema["~standard"].validate({
       summaries: {
-        "/code/alpha": { branch: "main", dirtyCount: 1, ahead: 0, behind: 0 },
+        "/code/alpha": normalSummary,
+        "/code/empty": emptySummary,
       },
       worktreesByRoot: {
-        "/code/alpha": [{ directory: "/code/alpha", branch: "main" }],
+        "/code/alpha": [{ directory: "/code/alpha", branch: "main" }, ...wtList],
       },
     })
-    expect("value" in valid && valid.value.worktreesByRoot["/code/alpha"]).toHaveLength(1)
+    expect("value" in valid).toBe(true)
+    if ("value" in valid) {
+      expect(valid.value.worktreesByRoot["/code/alpha"]).toHaveLength(2)
+      expect(() => encodeJson(valid.value as any)).not.toThrow()
+    }
   })
 })
 
@@ -469,6 +535,35 @@ describe("filterWorkspaceTreeForSwitcher", () => {
     if (firstDirect?.kind === "session") {
       expect(firstDirect.session.title).toBe("Session HER0cM")
     }
+  })
+
+  test("labels canonical repo folder as 'Project sessions' with muted branch tag while preserving secondary worktree labels", () => {
+    const [canonicalWt, secondaryWt] = sampleTree.projects[0]!.worktrees
+    expect(
+      formatSwitcherWorktreeLabel({
+        ...canonicalWt!,
+        branch: "feat/hover-fix",
+        label: "feat/hover-fix",
+      }),
+    ).toEqual({
+      title: "Project sessions",
+      subtitle: "⎇ feat/hover-fix",
+    })
+
+    expect(formatSwitcherWorktreeLabel(secondaryWt!)).toEqual({
+      title: "test/workspace-1",
+      subtitle: "opencode-workspaces-wt1",
+    })
+
+    // Querying "project" in /ws matches the canonical "Project sessions" group
+    const byProjectSessions = filterWorkspaceTreeForSwitcher(
+      sampleTree.projects,
+      "project sessions",
+    )
+    expect(byProjectSessions.projects[0]!.worktrees).toHaveLength(1)
+    expect(byProjectSessions.projects[0]!.worktrees[0]!.worktree.isCanonical).toBe(
+      true,
+    )
   })
 })
 

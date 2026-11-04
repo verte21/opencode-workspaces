@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import path from "node:path"
+import { Schema } from "effect"
 import ServerPlugin, { WorkspacesRpc } from "../src/index.js"
 
 describe("ServerPlugin RPC integration", () => {
@@ -57,6 +58,16 @@ describe("ServerPlugin RPC integration", () => {
     expect(typeof result.summaries[repoDir].branch).toBe("string")
     expect(result.summaries[repoDir].branch.length).toBeGreaterThan(0)
     expect(typeof result.summaries[repoDir].dirtyCount).toBe("number")
+
+    // Must pass both StandardSchemaV1 validation and OpenCode's Effect Schema.Json RPC response encoder (no `undefined` property values)
+    const validated =
+      WorkspacesRpc.methods.inspectLocations.output["~standard"].validate(result)
+    expect("value" in validated).toBe(true)
+    if ("value" in validated) {
+      expect(() =>
+        Schema.encodeUnknownSync(Schema.Json)(validated.value as any),
+      ).not.toThrow()
+    }
 
     // Passing explicit `rootDirectories: [repoDir]` inspects worktree status without duplicating `worktreesByRoot` keys
     const discoveredWts = result.worktreesByRoot[repoDir] ?? []

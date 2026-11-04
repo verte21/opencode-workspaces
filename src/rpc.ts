@@ -64,8 +64,8 @@ const InspectLocationsOutputSchema = standardSchema<InspectLocationsOutput>((val
     if (!entry || typeof entry !== "object") continue
     const obj = entry as Record<string, unknown>
     summaries[dir] = {
-      branch: typeof obj.branch === "string" ? obj.branch : undefined,
-      head: typeof obj.head === "string" ? obj.head : undefined,
+      ...(typeof obj.branch === "string" ? { branch: obj.branch } : {}),
+      ...(typeof obj.head === "string" ? { head: obj.head } : {}),
       dirtyCount: typeof obj.dirtyCount === "number" ? obj.dirtyCount : 0,
       ahead: typeof obj.ahead === "number" ? obj.ahead : 0,
       behind: typeof obj.behind === "number" ? obj.behind : 0,
@@ -83,8 +83,8 @@ const InspectLocationsOutputSchema = standardSchema<InspectLocationsOutput>((val
         .filter((item) => typeof item.directory === "string")
         .map((item) => ({
           directory: item.directory as string,
-          branch: typeof item.branch === "string" ? item.branch : undefined,
-          head: typeof item.head === "string" ? item.head : undefined,
+          ...(typeof item.branch === "string" ? { branch: item.branch } : {}),
+          ...(typeof item.head === "string" ? { head: item.head } : {}),
         }))
     }
   }

@@ -336,7 +336,12 @@ export function parseGitPorcelainBranchStatus(output: string): GitSummary {
     }
   }
 
-  return { branch, dirtyCount, ahead, behind }
+  return {
+    ...(branch !== undefined ? { branch } : {}),
+    dirtyCount,
+    ahead,
+    behind,
+  }
 }
 
 /**
@@ -375,7 +380,11 @@ export function parseGitWorktreePorcelain(output: string): GitWorktreeEntry[] {
     }
 
     if (directory && !isBare && !isPrunable) {
-      entries.push({ directory, branch, head })
+      entries.push({
+        directory,
+        ...(branch !== undefined ? { branch } : {}),
+        ...(head !== undefined ? { head } : {}),
+      })
     }
   }
 
@@ -521,6 +530,47 @@ export function buildWorkspaceTree(input: BuildWorkspaceTreeInput): WorkspaceTre
           knownDirSet.add(norm)
         }
       }
+    }
+
+    const hasStaticSandboxes = (project.sandboxes?.length ?? 0) > 0
+    const registerDistinctActiveDir = (rawDir: string | undefined) => {
+      if (!rawDir) return
+      const norm = normalizeDir(rawDir)
+      if (
+        !norm ||
+        norm === canonicalDir ||
+        isInvalidWorkspaceRoot(norm, input.homeDirectory) ||
+        knownDirSet.has(norm)
+      ) {
+        return
+      }
+      const coveredByNonCanonicalWorktree = Array.from(knownDirSet).some(
+        (known) => known !== canonicalDir && isSubpathOrSame(norm, known),
+      )
+      if (!coveredByNonCanonicalWorktree) {
+        knownDirSet.add(norm)
+      }
+    }
+
+    // Preserve nested worktrees (e.g. `<repo>/test-workspaces/wt-1` or `<repo>/.worktrees/feat`)
+    // for the active session/location and during initial OpenCode v2 startup (`sandboxes: []`)
+    // so `matchSessionWorktree` never collapses them onto `canonicalDir` (`main`).
+    for (const s of projSessions) {
+      if (s.id === input.currentSessionID) {
+        registerDistinctActiveDir(s.location.directory)
+      } else if (!hasLiveWorktreeSource && !hasStaticSandboxes) {
+        registerDistinctActiveDir(s.location.directory)
+      }
+    }
+    if (
+      !currentSession &&
+      isCurrentProject &&
+      normCurrentDir &&
+      isSubpathOrSame(normCurrentDir, canonicalDir) &&
+      !hasLiveWorktreeSource &&
+      !hasStaticSandboxes
+    ) {
+      registerDistinctActiveDir(normCurrentDir)
     }
 
     const baseKnownDirs = Array.from(knownDirSet)
@@ -825,6 +875,28 @@ export interface SwitcherFilterResult {
 }
 
 /**
+ * Formats worktree row titles in `/ws`: labels the canonical repository folder
+ * as `Project sessions` with its currently checked-out branch shown as a muted
+ * `⎇ <branch>` tag (since OpenCode scopes sessions by folder rather than branch),
+ * while secondary Git worktrees keep their dedicated branch/worktree label.
+ */
+export function formatSwitcherWorktreeLabel(
+  wt: Pick<WorktreeNode, "isCanonical" | "label" | "sublabel" | "branch">,
+): { readonly title: string; readonly subtitle?: string } {
+  if (wt.isCanonical) {
+    const branchTag = wt.branch ? `⎇ ${wt.branch}` : undefined
+    return {
+      title: "Project sessions",
+      ...(branchTag !== undefined ? { subtitle: branchTag } : {}),
+    }
+  }
+  return {
+    title: wt.label,
+    ...(wt.sublabel !== undefined ? { subtitle: wt.sublabel } : {}),
+  }
+}
+
+/**
  * Filters a `ProjectNode[]` hierarchy by query while preserving Project → Worktree → Session
  * tree grouping so matching sessions always retain their parent worktree context.
  */
@@ -872,8 +944,11 @@ export function filterWorkspaceTreeForSwitcher(
         continue
       }
 
+      const switcherDisplay = formatSwitcherWorktreeLabel(wt)
       const wtSearchText = [
         project.name,
+        switcherDisplay.title,
+        switcherDisplay.subtitle ?? "",
         wt.label,
         wt.sublabel ?? "",
         wt.branch ?? "",

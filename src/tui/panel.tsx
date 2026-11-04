@@ -1,5 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import {
+  MouseButton,
   TextAttributes,
   type BoxRenderable,
   type KeyEvent,
@@ -16,6 +17,7 @@ import { HoverMarqueeText } from "./marquee.js"
 import type { WorkspacesController } from "./state.js"
 import {
   resolvePanelRowBg,
+  resolveSidebarAccentHoverBg,
   resolveSidebarHoverBg,
   resolveStatusColor,
   sameStringArray,
@@ -24,6 +26,14 @@ import {
   worktreeGlyph,
   type SessionPanelSlotInput,
 } from "./types.js"
+
+function isLeftClick(event: { readonly button?: number }): boolean {
+  return event.button === undefined || event.button === MouseButton.LEFT
+}
+
+function isRightClick(event: { readonly button?: number }): boolean {
+  return event.button === MouseButton.RIGHT
+}
 
 export const WorkspacesPanel = (props: {
   readonly ctrl: WorkspacesController
@@ -55,6 +65,7 @@ export const WorkspacesPanel = (props: {
   const [selectedKey, setSelectedKey] = createSignal<string>("")
   const panelRowHover = createHoverKeySignal()
   const hoveredPanelKey = panelRowHover.hoveredKey
+  const panelSessionDeleteHover = createHoverKeySignal()
   const footerPathHover = createHoverFlagSignal()
   const hoveredFooterPath = footerPathHover.hovered
   const panelNewSessionHover = createHoverFlagSignal()
@@ -309,7 +320,9 @@ export const WorkspacesPanel = (props: {
       case "d":
         event.preventDefault()
         event.stopPropagation()
-        if (row && (row.kind === "worktree" || row.kind === "session")) {
+        if (row?.kind === "session") {
+          void ctrl.removeSessionFlow(row.session)
+        } else if (row?.kind === "worktree") {
           void ctrl.removeWorktreeFlow(row.project, row.worktree)
         }
         return
@@ -474,7 +487,8 @@ export const WorkspacesPanel = (props: {
                 backgroundColor={rowBg()}
                 onMouseOver={() => panelRowHover.onEnter(rowKey)}
                 onMouseOut={() => panelRowHover.onLeave(rowKey)}
-                onMouseUp={() => {
+                onMouseUp={(event) => {
+                  if (!isLeftClick(event)) return
                   panelUserMoved = true
                   setSelectedKey(rowKey)
                   const curWt = wt()
@@ -609,6 +623,9 @@ export const WorkspacesPanel = (props: {
             const sessions = row().worktree.sessions
             return sessions[sessions.length - 1]?.id === s().id
           }
+          const isSessHovered = () => hoveredPanelKey() === rowKey
+          const isDeleteHovered = () =>
+            panelSessionDeleteHover.hoveredKey() === rowKey
           return (
             <box
               ref={(el) => {
@@ -624,9 +641,19 @@ export const WorkspacesPanel = (props: {
               backgroundColor={rowBg()}
               onMouseOver={() => panelRowHover.onEnter(rowKey)}
               onMouseOut={() => panelRowHover.onLeave(rowKey)}
-              onMouseUp={() => {
+              onMouseUp={(event) => {
                 panelUserMoved = true
                 setSelectedKey(rowKey)
+                if (isRightClick(event)) {
+                  event.stopPropagation()
+                  void ctrl.openSessionContextMenu(
+                    s(),
+                    row().worktree.directory,
+                    row().project.id,
+                  )
+                  return
+                }
+                if (!isLeftClick(event)) return
                 ctrl.activateSession(
                   s().id,
                   row().worktree.directory,
@@ -682,33 +709,66 @@ export const WorkspacesPanel = (props: {
                   flexShrink={1}
                 />
               </box>
-              <Show
-                when={
-                  statusLabel(s().status, s().statusDetail) ??
-                  (s().isCurrent ? "active" : undefined)
-                }
-              >
-                {(badge) => (
+              <box flexDirection="row" columnGap={1} flexShrink={0}>
+                <box
+                  backgroundColor={
+                    isSessHovered() && isDeleteHovered()
+                      ? resolveSidebarAccentHoverBg(context.theme)
+                      : undefined
+                  }
+                  onMouseOver={() => panelSessionDeleteHover.onEnter(rowKey)}
+                  onMouseOut={() => panelSessionDeleteHover.onLeave(rowKey)}
+                  onMouseUp={(event) => {
+                    if (!isLeftClick(event) || !isRowActive()) return
+                    event.stopPropagation()
+                    void ctrl.removeSessionFlow(s())
+                  }}
+                >
                   <text
                     fg={
-                      s().status !== "idle"
-                        ? resolveStatusColor(
-                            context.theme,
-                            s().status,
-                            s().isCurrent,
-                          )
-                        : isRowActive()
-                          ? context.theme.text.muted
-                          : context.theme.text.faint
+                      isDeleteHovered()
+                        ? context.theme.text.feedback.error.base
+                        : context.theme.text.muted
+                    }
+                    attributes={
+                      isDeleteHovered()
+                        ? TextAttributes.BOLD
+                        : TextAttributes.NONE
                     }
                     selectable={false}
                     wrapMode="none"
-                    flexShrink={0}
                   >
-                    {badge()}
+                    {isRowActive() ? "×" : " "}
                   </text>
-                )}
-              </Show>
+                </box>
+                <Show
+                  when={
+                    statusLabel(s().status, s().statusDetail) ??
+                    (s().isCurrent ? "active" : undefined)
+                  }
+                >
+                  {(badge) => (
+                    <text
+                      fg={
+                        s().status !== "idle"
+                          ? resolveStatusColor(
+                              context.theme,
+                              s().status,
+                              s().isCurrent,
+                            )
+                          : isRowActive()
+                            ? context.theme.text.muted
+                            : context.theme.text.faint
+                      }
+                      selectable={false}
+                      wrapMode="none"
+                      flexShrink={0}
+                    >
+                      {badge()}
+                    </text>
+                  )}
+                </Show>
+              </box>
             </box>
           )
         }}

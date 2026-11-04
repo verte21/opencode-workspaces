@@ -15,6 +15,7 @@ import {
   type ProjectNode,
   type SessionRuntimeState,
   type WorkspacePreferences,
+  type WorkspaceSessionNode,
   type WorkspaceTreeResult,
   type WorktreeNode,
 } from "../model.js"
@@ -85,6 +86,12 @@ export interface WorkspacesController {
   readonly removeWorktreeFlow: (
     project: ProjectNode,
     worktree: WorktreeNode,
+  ) => Promise<void>
+  readonly removeSessionFlow: (session: WorkspaceSessionNode) => Promise<void>
+  readonly openSessionContextMenu: (
+    session: WorkspaceSessionNode,
+    worktreeDirectory: string,
+    projectID: string,
   ) => Promise<void>
   readonly moveCurrentSessionToDirectory: (
     targetDirectory: string,
@@ -174,7 +181,9 @@ export function createWorkspacesController(
   let syncQueued = false
   let lastRpcSucceeded = false
   let inventoryDiscoveryDirty = false
-  let lastSyncedLocationDir = ""
+  let projectSyncInFlight = false
+  const syncedLocationAt = new Map<string, number>()
+  const inFlightLocationDirs = new Set<string>()
   const lastInventoryRefreshAt = new Map<string, number>()
 
   const [selectedWorkspace, setSelectedWorkspace] = createSignal<
@@ -184,6 +193,9 @@ export function createWorkspacesController(
       }
     | undefined
   >(undefined)
+  const [deletedSessionIDs, setDeletedSessionIDs] = createSignal<
+    ReadonlySet<string>
+  >(new Set())
 
   const resolveLaunchDirectory = (): string | undefined => {
     if (context.location?.directory) {
@@ -220,6 +232,67 @@ export function createWorkspacesController(
     return bestID
   }
 
+  const ensureProjectSynced = (projectID?: string) => {
+    if (!projectID || projectSyncInFlight) return
+    if (context.data.project.get(projectID)) return
+    projectSyncInFlight = true
+    void context.data.project
+      .sync()
+      .catch(() => {})
+      .finally(() => {
+        projectSyncInFlight = false
+      })
+  }
+
+  const ensureLocationSynced = (
+    rawLocation:
+      | { readonly directory: string; readonly subpath?: string }
+      | undefined,
+    projectIDHint?: string,
+    options?: { readonly force?: boolean; readonly invalidate?: boolean },
+  ) => {
+    if (!rawLocation?.directory) return
+    const norm = normalizeDir(rawLocation.directory)
+    if (!norm || isInvalidWorkspaceRoot(norm)) return
+    ensureProjectSynced(projectIDHint)
+
+    const syncRef = rawLocation.subpath
+      ? { directory: norm, subpath: rawLocation.subpath }
+      : { directory: norm }
+
+    if (options?.invalidate) {
+      syncedLocationAt.delete(norm)
+      try {
+        context.data.location.invalidate(syncRef)
+        context.data.location.vcs.invalidate(syncRef)
+      } catch {
+        // Ignore optional invalidate failures
+      }
+    }
+
+    if (
+      !options?.force &&
+      (syncedLocationAt.has(norm) || inFlightLocationDirs.has(norm))
+    ) {
+      return
+    }
+    if (inFlightLocationDirs.has(norm)) return
+
+    inFlightLocationDirs.add(norm)
+    void Promise.all([
+      context.data.location.sync(syncRef),
+      context.data.location.vcs.sync(syncRef),
+    ])
+      .then(() => {
+        inFlightLocationDirs.delete(norm)
+        syncedLocationAt.set(norm, Date.now())
+      })
+      .catch(() => {
+        inFlightLocationDirs.delete(norm)
+        syncedLocationAt.delete(norm)
+      })
+  }
+
   const recordSelectedWorkspace = (
     directory: string | undefined,
     projectIDHint?: string,
@@ -232,11 +305,7 @@ export function createWorkspacesController(
     if (!prev || prev.directory !== norm || prev.projectID !== projectID) {
       setSelectedWorkspace({ directory: norm, projectID })
     }
-    if (lastSyncedLocationDir !== norm) {
-      lastSyncedLocationDir = norm
-      void context.data.location.sync({ directory: norm }).catch(() => {})
-      void context.data.location.vcs.sync({ directory: norm }).catch(() => {})
-    }
+    ensureLocationSynced({ directory: norm }, projectID)
   }
 
   const resolveActiveSessionID = (
@@ -300,8 +369,17 @@ export function createWorkspacesController(
     readonly onlyRelevantProjects?: boolean
   }): WorkspaceTreeResult => {
     const projects = context.data.project.list()
-    const listedSessions = context.data.session.list()
-    const currentSessionID = resolveActiveSessionID(options?.explicitSessionID)
+    const deleted = deletedSessionIDs()
+    const listedSessions = context.data.session
+      .list()
+      .filter((s) => !deleted.has(s.id))
+    const rawCurrentSessionID = resolveActiveSessionID(
+      options?.explicitSessionID,
+    )
+    const currentSessionID =
+      rawCurrentSessionID && !deleted.has(rawCurrentSessionID)
+        ? rawCurrentSessionID
+        : undefined
     const currentDirectory = resolveActiveDirectory(currentSessionID)
 
     let sessions = listedSessions
@@ -683,6 +761,7 @@ export function createWorkspacesController(
         draft.gitByDirectory = nextGitByDir
         draft.lastSyncedAt = Date.now()
       })
+      syncOpenTabLocations()
     } finally {
       syncInFlight = false
       if (syncQueued && !disposed) {
@@ -722,6 +801,32 @@ export function createWorkspacesController(
 
   const syncPendingSessionIDs = new Set<string>()
 
+  function syncOpenTabLocations() {
+    if (disposed || !context.ui.tabs.enabled()) return
+    for (const tab of context.ui.tabs.list()) {
+      const sess = context.data.session.get(tab.sessionID)
+      if (!sess) {
+        if (!syncPendingSessionIDs.has(tab.sessionID)) {
+          syncPendingSessionIDs.add(tab.sessionID)
+          void context.data.session
+            .sync(tab.sessionID)
+            .then(() => {
+              syncPendingSessionIDs.delete(tab.sessionID)
+              const loaded = context.data.session.get(tab.sessionID)
+              if (loaded && !disposed) {
+                ensureLocationSynced(loaded.location, loaded.projectID)
+              }
+            })
+            .catch(() => {
+              syncPendingSessionIDs.delete(tab.sessionID)
+            })
+        }
+        continue
+      }
+      ensureLocationSynced(sess.location, sess.projectID)
+    }
+  }
+
   const syncSessionWorkspace = (sessionID: string | undefined) => {
     if (disposed || !sessionID) return
     const rootID = context.data.session.root(sessionID)
@@ -746,26 +851,48 @@ export function createWorkspacesController(
 
     untrack(() => {
       recordSelectedWorkspace(session.location.directory, session.projectID)
+      ensureLocationSynced(session.location, session.projectID)
     })
   }
 
   cleanups.push(
     context.data.on("worktree.updated", () => {
       inventoryDiscoveryDirty = true
+      syncedLocationAt.clear()
       scheduleRefresh(100)
     }),
     context.data.on("vcs.branch.updated", () => {
       inventoryDiscoveryDirty = true
+      syncedLocationAt.clear()
+      syncOpenTabLocations()
       scheduleRefresh(150)
     }),
     context.data.on("project.updated", () => scheduleRefresh(200)),
     context.data.on("session.created", () => scheduleRefresh(150)),
-    context.data.on("session.deleted", () => scheduleRefresh(150)),
+    context.data.on("session.deleted", (event) => {
+      const deletedID =
+        (event as { data?: { sessionID?: string }; durable?: { aggregateID?: string } })
+          .data?.sessionID ??
+        (event as { durable?: { aggregateID?: string } }).durable?.aggregateID
+      if (deletedID) {
+        setDeletedSessionIDs((prev) => {
+          if (prev.has(deletedID)) return prev
+          const next = new Set(prev)
+          next.add(deletedID)
+          return next
+        })
+      }
+      scheduleRefresh(150)
+    }),
     context.data.on("filesystem.changed", () => scheduleRefresh(400)),
     context.data.on("session.idle", () => scheduleRefresh(250)),
     context.data.on("session.moved", (event) => {
       context.data.session.invalidate(event.data.sessionID)
       void context.data.session.sync(event.data.sessionID).catch(() => {})
+      ensureLocationSynced(event.data.location, event.data.projectID, {
+        force: true,
+        invalidate: true,
+      })
       const activeRoot = resolveActiveSessionID()
       if (
         activeRoot &&
@@ -817,11 +944,40 @@ export function createWorkspacesController(
     projectIDHint?: string,
   ) => {
     const existing = context.data.session.get(sessionID)
-    recordSelectedWorkspace(
-      directoryHint ?? existing?.location.directory,
-      projectIDHint ?? existing?.projectID,
-    )
+    const targetDir = directoryHint ?? existing?.location.directory
+    const targetProjectID = projectIDHint ?? existing?.projectID
+    recordSelectedWorkspace(targetDir, targetProjectID)
+
+    const locRef =
+      existing?.location ??
+      (targetDir ? { directory: normalizeDir(targetDir) } : undefined)
+    if (locRef?.directory) {
+      const norm = normalizeDir(locRef.directory)
+      const missingVcs = !context.data.location.vcs.info(locRef)
+      const lastAt = syncedLocationAt.get(norm) ?? 0
+      ensureLocationSynced(locRef, targetProjectID, {
+        force: missingVcs && Date.now() - lastAt > 1_000,
+      })
+    }
+
+    if (!existing && !syncPendingSessionIDs.has(sessionID)) {
+      syncPendingSessionIDs.add(sessionID)
+      void context.data.session
+        .sync(sessionID)
+        .then(() => {
+          syncPendingSessionIDs.delete(sessionID)
+          const synced = context.data.session.get(sessionID)
+          if (synced && !disposed) {
+            ensureLocationSynced(synced.location, synced.projectID)
+          }
+        })
+        .catch(() => {
+          syncPendingSessionIDs.delete(sessionID)
+        })
+    }
+
     if (context.ui.tabs.enabled()) {
+      context.ui.tabs.open(sessionID)
       context.ui.tabs.focus(sessionID)
     }
     context.ui.router.navigate({ type: "session", sessionID })
@@ -837,12 +993,44 @@ export function createWorkspacesController(
     recordSelectedWorkspace(normDir, projectIDHint)
 
     try {
-      await context.data.location.sync({ directory: normDir }).catch(() => {})
+      const resolvedProjectID =
+        projectIDHint ?? inferProjectIDForDirectory(normDir)
+      const projectCanonical = resolvedProjectID
+        ? normalizeDir(
+            context.data.project.get(resolvedProjectID)?.canonical ?? "",
+          )
+        : ""
+      if (
+        resolvedProjectID &&
+        normDir !== projectCanonical &&
+        !(cache.worktreesByProject?.[resolvedProjectID] ?? []).some(
+          (wt) => normalizeDir(wt) === normDir,
+        )
+      ) {
+        await context.client.worktree
+          .refresh({ projectID: resolvedProjectID })
+          .catch(() => {})
+      }
+
+      await Promise.all([
+        context.data.location.sync({ directory: normDir }),
+        context.data.location.vcs.sync({ directory: normDir }),
+      ])
+        .then(() => {
+          syncedLocationAt.set(normDir, Date.now())
+        })
+        .catch(() => {
+          syncedLocationAt.delete(normDir)
+        })
+
       const created = await context.client.session.create({
         location: { directory: normDir },
       })
 
-      if (normalizeDir(created.location.directory) !== normDir) {
+      if (
+        created?.location?.directory &&
+        normalizeDir(created.location.directory) !== normDir
+      ) {
         try {
           await context.client.session.move({
             sessionID: created.id,
@@ -859,10 +1047,17 @@ export function createWorkspacesController(
 
       context.data.session.invalidate(created.id)
       await context.data.session.sync(created.id).catch(() => {})
+      const synced = context.data.session.get(created.id)
+      const finalLocation = synced?.location ??
+        created?.location ?? { directory: normDir }
+      const finalProjectID =
+        synced?.projectID ?? resolvedProjectID ?? created?.projectID
+      ensureLocationSynced(finalLocation, finalProjectID, { force: true })
+
       activateSession(
         created.id,
-        normDir,
-        projectIDHint ?? created.projectID,
+        normalizeDir(finalLocation.directory) || normDir,
+        finalProjectID,
       )
       scheduleRefresh(80)
       if (announceLabel) {
@@ -1131,6 +1326,134 @@ export function createWorkspacesController(
     }
   }
 
+  const removeSessionFlow = async (session: WorkspaceSessionNode) => {
+    const confirmed = await context.ui.dialog.confirm({
+      title: "Delete Session",
+      message: `Delete session "${session.title}"?`,
+      label: { confirm: "Delete", cancel: "Cancel" },
+    })
+    if (!confirmed) return
+
+    const wasActive = resolveActiveSessionID() === session.id
+    const wasInTabs =
+      context.ui.tabs.enabled() &&
+      context.ui.tabs.list().some((t) => t.sessionID === session.id)
+
+    try {
+      await context.client.session.remove({ sessionID: session.id })
+      setDeletedSessionIDs((prev) => {
+        const next = new Set(prev)
+        next.add(session.id)
+        return next
+      })
+      context.data.session.invalidate(session.id)
+
+      if (wasInTabs) {
+        context.ui.tabs.close(session.id)
+      }
+
+      if (wasActive) {
+        const routeAfterTabClose = context.ui.router.current()
+        if (
+          !wasInTabs ||
+          (routeAfterTabClose.type === "session" &&
+            context.data.session.root(routeAfterTabClose.sessionID) ===
+              session.id)
+        ) {
+          const deleted = deletedSessionIDs()
+          const remaining = context.data.session
+            .list()
+            .filter(
+              (s) =>
+                !s.parentID &&
+                !s.time.archived &&
+                s.id !== session.id &&
+                !deleted.has(s.id) &&
+                s.projectID === session.projectID,
+            )
+            .sort((a, b) => b.time.updated - a.time.updated)
+          const sameWorktree = remaining.find(
+            (s) => normalizeDir(s.location.directory) === session.directory,
+          )
+          const fallback = sameWorktree ?? remaining[0]
+          if (fallback) {
+            activateSession(
+              fallback.id,
+              fallback.location.directory,
+              fallback.projectID,
+            )
+          } else {
+            context.ui.router.navigate({ type: "home" })
+          }
+        }
+      }
+
+      scheduleRefresh(80)
+      context.ui.toast.show({
+        message: `Deleted session ${session.title}`,
+        variant: "success",
+        duration: 1800,
+      })
+    } catch (err) {
+      context.ui.toast.show({
+        title: "Failed to delete session",
+        message: err instanceof Error ? err.message : String(err),
+        variant: "error",
+      })
+    }
+  }
+
+  const openSessionContextMenu = async (
+    session: WorkspaceSessionNode,
+    worktreeDirectory: string,
+    projectID: string,
+  ) => {
+    const isInTabs =
+      context.ui.tabs.enabled() &&
+      context.ui.tabs.list().some((t) => t.sessionID === session.id)
+
+    type SessionAction = "delete" | "open" | "close-tab"
+    const options: Array<{
+      readonly title: string
+      readonly value: SessionAction
+      readonly description?: string
+    }> = [
+      {
+        title: "Delete session",
+        value: "delete",
+        description: `Permanently delete "${session.title}"`,
+      },
+      {
+        title: "Open session",
+        value: "open",
+        description: `Switch to "${session.title}"`,
+      },
+      ...(isInTabs
+        ? [
+            {
+              title: "Close tab" as const,
+              value: "close-tab" as const,
+              description: "Close tab without deleting session history",
+            },
+          ]
+        : []),
+    ]
+
+    const action = await context.ui.dialog.select<SessionAction>({
+      title: session.title,
+      placeholder: "Choose session action...",
+      options,
+    })
+
+    if (action === "open") {
+      activateSession(session.id, worktreeDirectory, projectID)
+    } else if (action === "close-tab") {
+      context.ui.tabs.close(session.id)
+    } else if (action === "delete") {
+      await removeSessionFlow(session)
+    }
+  }
+
   const moveCurrentSessionToDirectory = async (
     targetDirectory: string,
     explicitSessionID?: string,
@@ -1161,6 +1484,12 @@ export function createWorkspacesController(
       recordSelectedWorkspace(normTarget, projectIDHint)
       context.data.session.invalidate(activeID)
       await context.data.session.sync(activeID).catch(() => {})
+      const moved = context.data.session.get(activeID)
+      ensureLocationSynced(
+        moved?.location ?? { directory: normTarget },
+        moved?.projectID ?? projectIDHint,
+        { force: true, invalidate: true },
+      )
       scheduleRefresh(100)
       context.ui.toast.show({
         message: `Moved session to ${dirBasename(normTarget)}`,
@@ -1299,6 +1628,8 @@ export function createWorkspacesController(
     toggleShowAllGitProjects,
     createWorktreeFlow,
     removeWorktreeFlow,
+    removeSessionFlow,
+    openSessionContextMenu,
     moveCurrentSessionToDirectory,
     jumpToQuickSlot,
     openWorktreeInEditor,

@@ -6,6 +6,8 @@ import type {
   GitWorktreeEntry,
 } from "../model.js"
 
+export type ThemeColor = Plugin.Context["theme"]["text"]["base"]
+
 export const PANEL_NAME = "opencode-workspaces.panel"
 
 export interface SessionPanelSlotInput {
@@ -62,7 +64,7 @@ export function resolveStatusColor(
   theme: Plugin.Context["theme"],
   status: AgentStatus,
   isCurrent: boolean,
-) {
+): ThemeColor {
   if (status === "blocked") return theme.text.feedback.warning.base
   if (status === "working") return theme.text.feedback.info.base
   if (isCurrent) return theme.text.action.primary.selected
@@ -131,13 +133,54 @@ export function isVisiblyDistinctOnSurface(
   return delta >= minChannelDelta
 }
 
+function clampByte(value: number): number {
+  return Math.max(0, Math.min(255, Math.round(value * 255)))
+}
+
+function formatHexRgb(r: number, g: number, b: number): string {
+  const hex = (v: number) => clampByte(v).toString(16).padStart(2, "0")
+  return `#${hex(r)}${hex(g)}${hex(b)}`
+}
+
+function synthesizeHoverSurface(
+  surface: unknown,
+  text: unknown,
+  weight = 0.14,
+): string {
+  const surf = parseColorChannels(surface)
+  const txt = parseColorChannels(text)
+
+  if (!surf || surf.a < 0.05) {
+    const base = txt && txt.a >= 0.2 ? txt : { r: 1, g: 1, b: 1 }
+    return formatHexRgb(base.r * 0.22, base.g * 0.24, base.b * 0.28)
+  }
+
+  const surfLuma = (surf.r + surf.g + surf.b) / 3
+  const fallbackTarget =
+    surfLuma < 0.5 ? { r: 1, g: 1, b: 1 } : { r: 0, g: 0, b: 0 }
+  const textDelta = txt
+    ? Math.abs(txt.r - surf.r) +
+      Math.abs(txt.g - surf.g) +
+      Math.abs(txt.b - surf.b)
+    : 0
+  const target = txt && txt.a >= 0.2 && textDelta >= 0.3 ? txt : fallbackTarget
+
+  return formatHexRgb(
+    surf.r + (target.r - surf.r) * weight,
+    surf.g + (target.g - surf.g) * weight,
+    surf.b + (target.b - surf.b) * weight,
+  )
+}
+
 /**
  * OpenCode's right sidebar and right split-pane already render on
  * `theme.background.raised.base` (`$hue.neutral.700`, or transparent in
  * transparent terminal themes). Hover highlights must step above `raised.base`
  * with an opaque, perceptually distinct surface color.
  */
-export function resolveSidebarHoverBg(theme: Plugin.Context["theme"]) {
+export function resolveSidebarHoverBg(
+  theme: Plugin.Context["theme"],
+): ThemeColor | string {
   const surface = theme.background.raised.base
   const dialogHovered =
     typeof theme.surface === "function"
@@ -149,20 +192,19 @@ export function resolveSidebarHoverBg(theme: Plugin.Context["theme"]) {
     theme.background.raised.high,
     theme.hue?.interactive?.[600],
   ]
-  for (const minDelta of [0.12, 0.06, 0.02]) {
+  for (const minDelta of [0.16, 0.12]) {
     for (const candidate of candidates) {
       if (candidate && isVisiblyDistinctOnSurface(candidate, surface, minDelta)) {
         return candidate
       }
     }
   }
-  for (const candidate of candidates) {
-    if (parseColorChannels(candidate)) return candidate
-  }
-  return theme.background.raised.high
+  return synthesizeHoverSurface(surface, theme.text?.base, 0.14)
 }
 
-export function resolveSidebarAccentHoverBg(theme: Plugin.Context["theme"]) {
+export function resolveSidebarAccentHoverBg(
+  theme: Plugin.Context["theme"],
+): ThemeColor | string {
   const rowHover = resolveSidebarHoverBg(theme)
   const candidates = [
     theme.hue?.interactive?.[600],
@@ -172,26 +214,26 @@ export function resolveSidebarAccentHoverBg(theme: Plugin.Context["theme"]) {
   for (const candidate of candidates) {
     if (
       candidate &&
-      isVisiblyDistinctOnSurface(candidate, theme.background.raised.base, 0.06) &&
-      isVisiblyDistinctOnSurface(candidate, rowHover, 0.03)
+      isVisiblyDistinctOnSurface(candidate, theme.background.raised.base, 0.12) &&
+      isVisiblyDistinctOnSurface(candidate, rowHover, 0.05)
     ) {
       return candidate
     }
   }
-  return rowHover
+  return synthesizeHoverSurface(rowHover, theme.text?.base, 0.12)
 }
 
 export function resolvePanelRowBg(
   theme: Plugin.Context["theme"],
   state: { readonly selected: boolean; readonly hovered: boolean },
-) {
+): ThemeColor | string | undefined {
   if (!state.selected && !state.hovered) return undefined
   const surface = theme.background.raised.base
   const high = theme.background.raised.high
   const max = theme.background.raised.max
   const interactive = theme.hue?.interactive?.[600]
 
-  const hoverBg = isVisiblyDistinctOnSurface(high, surface, 0.08)
+  const hoverBg = isVisiblyDistinctOnSurface(high, surface, 0.12)
     ? high
     : resolveSidebarHoverBg(theme)
 
@@ -199,28 +241,32 @@ export function resolvePanelRowBg(
     return hoverBg
   }
 
-  let selectedBg = parseColorChannels(max) ? max : high
+  let selectedBg: ThemeColor | string = parseColorChannels(max) ? max : high
   if (
-    !isVisiblyDistinctOnSurface(selectedBg, surface, 0.1) ||
-    !isVisiblyDistinctOnSurface(selectedBg, hoverBg, 0.04)
+    !isVisiblyDistinctOnSurface(selectedBg, surface, 0.14) ||
+    !isVisiblyDistinctOnSurface(selectedBg, hoverBg, 0.05)
   ) {
     if (
       interactive &&
-      isVisiblyDistinctOnSurface(interactive, surface, 0.08) &&
-      isVisiblyDistinctOnSurface(interactive, hoverBg, 0.03)
+      isVisiblyDistinctOnSurface(interactive, surface, 0.12) &&
+      isVisiblyDistinctOnSurface(interactive, hoverBg, 0.05)
     ) {
       selectedBg = interactive
+    } else {
+      selectedBg = synthesizeHoverSurface(hoverBg, theme.text?.base, 0.1)
     }
   }
 
-  if (
-    state.hovered &&
-    interactive &&
-    selectedBg !== interactive &&
-    isVisiblyDistinctOnSurface(interactive, surface, 0.08) &&
-    isVisiblyDistinctOnSurface(interactive, selectedBg, 0.02)
-  ) {
-    return interactive
+  if (state.hovered) {
+    if (
+      interactive &&
+      selectedBg !== interactive &&
+      isVisiblyDistinctOnSurface(interactive, surface, 0.12) &&
+      isVisiblyDistinctOnSurface(interactive, selectedBg, 0.04)
+    ) {
+      return interactive
+    }
+    return synthesizeHoverSurface(selectedBg, theme.text?.base, 0.08)
   }
 
   return selectedBg
@@ -229,11 +275,15 @@ export function resolvePanelRowBg(
 export function resolveDialogHoverBg(
   baseTheme: Plugin.Context["theme"],
   dialogTheme: Plugin.Context["theme"],
-) {
+): ThemeColor | string {
   const surface = dialogTheme.background.base
   const hovered = dialogTheme.background.action.primary.hovered
-  if (isVisiblyDistinctOnSurface(hovered, surface, 0.08)) {
+  if (isVisiblyDistinctOnSurface(hovered, surface, 0.12)) {
     return hovered
   }
-  return resolveSidebarHoverBg(baseTheme)
+  const fallback = resolveSidebarHoverBg(baseTheme)
+  if (isVisiblyDistinctOnSurface(fallback, surface, 0.12)) {
+    return fallback
+  }
+  return synthesizeHoverSurface(surface, dialogTheme.text?.base, 0.14)
 }

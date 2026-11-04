@@ -4,14 +4,25 @@
   "description": "OpenCode v2 workspace, Git worktree, and session tree in the right-hand pane",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./tui": "./src/tui.tsx",
-    "./rpc": "./src/rpc.ts"
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./tui": {
+      "import": "./dist/tui.js",
+      "types": "./dist/tui.d.ts"
+    },
+    "./rpc": {
+      "import": "./dist/rpc.js",
+      "types": "./dist/rpc.d.ts"
+    }
   },
   "files": [
+    "dist",
     "src"
   ],
   "scripts": {
+    "build": "bun run scripts/build.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test ./test"
   },

@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/solid */
-import { TextAttributes } from "@opentui/core"
+import { MouseButton, TextAttributes } from "@opentui/core"
 import { For, Show, createEffect, createMemo } from "solid-js"
 import {
   dirBasename,
@@ -24,6 +24,14 @@ import {
   statusLabel,
 } from "./types.js"
 
+function isLeftClick(event: { readonly button?: number }): boolean {
+  return event.button === undefined || event.button === MouseButton.LEFT
+}
+
+function isRightClick(event: { readonly button?: number }): boolean {
+  return event.button === MouseButton.RIGHT
+}
+
 function renderSidebarWorktreeRow(
   ctrl: WorkspacesController,
   wtAccessor: () => WorktreeNode | undefined,
@@ -32,6 +40,7 @@ function renderSidebarWorktreeRow(
   chevronHover: HoverKeyController,
   plusHover: HoverKeyController,
   sessionHover: HoverKeyController,
+  sessionDeleteHover: HoverKeyController,
 ) {
   const { context } = ctrl
   const getRenderer = () => context.renderer
@@ -79,7 +88,8 @@ function renderSidebarWorktreeRow(
               backgroundColor={isRowHovered() ? hoverBg() : undefined}
               onMouseOver={() => worktreeHover.onEnter(wt().directory)}
               onMouseOut={() => worktreeHover.onLeave(wt().directory)}
-              onMouseUp={() => {
+              onMouseUp={(event) => {
+                if (!isLeftClick(event)) return
                 const cur = wt()
                 if (cur.isCurrent && hasSessions()) {
                   ctrl.toggleSidebarWorktree(cur.directory)
@@ -104,6 +114,7 @@ function renderSidebarWorktreeRow(
                   onMouseOver={() => chevronHover.onEnter(wt().directory)}
                   onMouseOut={() => chevronHover.onLeave(wt().directory)}
                   onMouseUp={(event) => {
+                    if (!isLeftClick(event)) return
                     if (hasSessions()) {
                       event.stopPropagation()
                       ctrl.toggleSidebarWorktree(wt().directory)
@@ -170,7 +181,7 @@ function renderSidebarWorktreeRow(
                   onMouseOver={() => plusHover.onEnter(wt().directory)}
                   onMouseOut={() => plusHover.onLeave(wt().directory)}
                   onMouseUp={(event) => {
-                    if (!isRowHovered()) return
+                    if (!isLeftClick(event) || !isRowHovered()) return
                     event.stopPropagation()
                     const cur = wt()
                     void ctrl.createSessionInDirectory(
@@ -259,6 +270,8 @@ function renderSidebarWorktreeRow(
                   sessIdx() === visibleSessionIDs().length - 1
                 const isSessHovered = () =>
                   sessionHover.hoveredKey() === sessionID
+                const isDeleteHovered = () =>
+                  sessionDeleteHover.hoveredKey() === sessionID
                 return (
                   <Show when={sessionAccessor()}>
                     {(session) => (
@@ -273,13 +286,23 @@ function renderSidebarWorktreeRow(
                         }
                         onMouseOver={() => sessionHover.onEnter(session().id)}
                         onMouseOut={() => sessionHover.onLeave(session().id)}
-                        onMouseUp={() =>
+                        onMouseUp={(event) => {
+                          if (isRightClick(event)) {
+                            event.stopPropagation()
+                            void ctrl.openSessionContextMenu(
+                              session(),
+                              wt().directory,
+                              wt().projectID,
+                            )
+                            return
+                          }
+                          if (!isLeftClick(event)) return
                           ctrl.activateSession(
                             session().id,
                             wt().directory,
                             wt().projectID,
                           )
-                        }
+                        }}
                       >
                         <box
                           flexDirection="row"
@@ -340,27 +363,70 @@ function renderSidebarWorktreeRow(
                             flexShrink={1}
                           />
                         </box>
-                        <Show
-                          when={statusLabel(
-                            session().status,
-                            session().statusDetail,
-                          )}
+                        <box
+                          flexDirection="row"
+                          columnGap={1}
+                          flexShrink={0}
                         >
-                          {(badge) => (
+                          <box
+                            backgroundColor={
+                              isSessHovered() && isDeleteHovered()
+                                ? accentHoverBg()
+                                : undefined
+                            }
+                            onMouseOver={() =>
+                              sessionDeleteHover.onEnter(session().id)
+                            }
+                            onMouseOut={() =>
+                              sessionDeleteHover.onLeave(session().id)
+                            }
+                            onMouseUp={(event) => {
+                              if (!isLeftClick(event) || !isSessHovered()) {
+                                return
+                              }
+                              event.stopPropagation()
+                              void ctrl.removeSessionFlow(session())
+                            }}
+                          >
                             <text
-                              fg={resolveStatusColor(
-                                context.theme,
-                                session().status,
-                                session().isCurrent,
-                              )}
+                              fg={
+                                isDeleteHovered()
+                                  ? context.theme.text.feedback.error.base
+                                  : context.theme.text.muted
+                              }
+                              attributes={
+                                isDeleteHovered()
+                                  ? TextAttributes.BOLD
+                                  : TextAttributes.NONE
+                              }
                               selectable={false}
                               wrapMode="none"
-                              flexShrink={0}
                             >
-                              {badge()}
+                              {isSessHovered() ? "×" : " "}
                             </text>
-                          )}
-                        </Show>
+                          </box>
+                          <Show
+                            when={statusLabel(
+                              session().status,
+                              session().statusDetail,
+                            )}
+                          >
+                            {(badge) => (
+                              <text
+                                fg={resolveStatusColor(
+                                  context.theme,
+                                  session().status,
+                                  session().isCurrent,
+                                )}
+                                selectable={false}
+                                wrapMode="none"
+                                flexShrink={0}
+                              >
+                                {badge()}
+                              </text>
+                            )}
+                          </Show>
+                        </box>
                       </box>
                     )}
                   </Show>
@@ -394,6 +460,7 @@ export const WorkspacesSidebar = (props: {
   const chevronHover = createHoverKeySignal()
   const plusHover = createHoverKeySignal()
   const subSessionHover = createHoverKeySignal()
+  const subSessionDeleteHover = createHoverKeySignal()
   const newSessionHover = createHoverFlagSignal()
   const newSessionHovered = newSessionHover.hovered
   const hoverBg = () => resolveSidebarHoverBg(context.theme)
@@ -411,8 +478,26 @@ export const WorkspacesSidebar = (props: {
   )
 
   const currentProject = createMemo(() => tree().projects[0])
-  const resolveTargetWorktree = (proj: ProjectNode) =>
-    proj.worktrees.find((wt) => wt.isCurrent) ?? proj.worktrees[0]
+  const resolveTargetWorktree = (proj: ProjectNode) => {
+    const activeWt = proj.worktrees.find((wt) => wt.isCurrent)
+    if (activeWt) return activeWt
+    const activeDir = ctrl.resolveActiveDirectory(props.sessionID)
+    if (activeDir) {
+      const matched = proj.worktrees.find((wt) => wt.directory === activeDir)
+      if (matched) return matched
+    }
+    return undefined
+  }
+
+  const resolveNewSessionSubtitle = (proj: ProjectNode): string | undefined => {
+    const targetWt = resolveTargetWorktree(proj)
+    if (targetWt?.label) return targetWt.label
+    const activeDir = ctrl.resolveActiveDirectory(props.sessionID)
+    if (activeDir) {
+      return dirBasename(activeDir) || proj.worktrees[0]?.label
+    }
+    return proj.worktrees[0]?.label
+  }
 
   const lowerHalfHeight = createMemo(() =>
     Math.max(10, Math.ceil((ctrl.terminalHeight() - 3) / 2)),
@@ -430,7 +515,7 @@ export const WorkspacesSidebar = (props: {
       ).length
       return sum + 1 + Math.min(3, activeBg)
     }, 0)
-    const newSessionRows = resolveTargetWorktree(proj)?.label ? 2 : 1
+    const newSessionRows = resolveNewSessionSubtitle(proj) ? 2 : 1
     // Top border (1) + paddingTop (1) + header (1) + marginTop (1) + newSessionRows (1..2) + paddingBottom (1)
     const chromeRows = 5 + newSessionRows
     const maxRows = Math.max(2, lowerHalfHeight() - chromeRows)
@@ -442,6 +527,7 @@ export const WorkspacesSidebar = (props: {
     const dir = resolveWorkspaceNewSessionDirectory({
       currentWorktreeDirectory: currentWt?.directory,
       activeSessionDirectory: ctrl.resolveActiveDirectory(props.sessionID),
+      launchDirectory: proj.canonical,
     })
     if (!dir) return
     void ctrl.createSessionInDirectory(
@@ -480,7 +566,10 @@ export const WorkspacesSidebar = (props: {
               backgroundColor={headerHovered() ? hoverBg() : undefined}
               onMouseOver={() => headerHover.onEnter()}
               onMouseOut={() => headerHover.onLeave()}
-              onMouseUp={() => props.onTogglePanel()}
+              onMouseUp={(event) => {
+                if (!isLeftClick(event)) return
+                props.onTogglePanel()
+              }}
             >
               <text
                 fg={
@@ -528,6 +617,7 @@ export const WorkspacesSidebar = (props: {
                       chevronHover,
                       plusHover,
                       subSessionHover,
+                      subSessionDeleteHover,
                     )
                   }
                 </For>
@@ -543,6 +633,7 @@ export const WorkspacesSidebar = (props: {
               onMouseOver={() => newSessionHover.onEnter()}
               onMouseOut={() => newSessionHover.onLeave()}
               onMouseUp={(event) => {
+                if (!isLeftClick(event)) return
                 event.stopPropagation()
                 spawnSessionInCurrentWorktree(proj())
               }}
@@ -559,7 +650,7 @@ export const WorkspacesSidebar = (props: {
               >
                 + New session
               </text>
-              <Show when={resolveTargetWorktree(proj())?.label}>
+              <Show when={resolveNewSessionSubtitle(proj())}>
                 {(branch) => (
                   <box
                     flexDirection="row"

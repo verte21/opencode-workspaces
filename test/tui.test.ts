@@ -1553,4 +1553,1165 @@ describe("TuiPlugin UI & hot-reload integration", () => {
     if (cleanup) await cleanup()
     panelUi.renderer.destroy()
   })
+
+  test("preserves reactive hover highlights when loaded from node_modules/dist/tui.js (where bun-plugin-solid skips transformation)", async () => {
+    const { cp, mkdir, rm } = await import("node:fs/promises")
+    const path = await import("node:path")
+    const { pathToFileURL } = await import("node:url")
+    const { isNodeModulesPath } = await import(
+      "../node_modules/@opentui/solid/scripts/solid-transform.js"
+    )
+    const { ensureRuntimePluginSupport } = await import(
+      "@opentui/solid/runtime-plugin-support/configure"
+    )
+    const { ensurePluginRuntime } = await import("@opencode/plugin/runtime")
+    const { testRender } = await import("@opentui/solid")
+    const { createStore, produce } = await import("solid-js/store")
+    const { isVisiblyDistinctOnSurface } = await import("../src/tui/types.js")
+
+    const runtimeMods = ensurePluginRuntime()
+    ensureRuntimePluginSupport({
+      additional: Object.fromEntries(
+        Object.entries(runtimeMods).map(([k, loader]) => [
+          k,
+          (loader as () => any)(),
+        ]),
+      ) as Record<string, any>,
+    })
+
+    const repoDir = path.resolve(import.meta.dir, "..")
+    const distSrc = path.join(repoDir, "dist")
+    const tmpPkgRoot = path.join(repoDir, "node_modules", ".tmp-pkg-hover-test")
+    const tmpDist = path.join(tmpPkgRoot, "opencode-workspaces", "dist")
+
+    await rm(tmpPkgRoot, { recursive: true, force: true })
+    await mkdir(tmpDist, { recursive: true })
+    await cp(distSrc, tmpDist, { recursive: true })
+
+    try {
+      const distEntryPath = path.join(tmpDist, "tui.js")
+      expect(isNodeModulesPath(distEntryPath)).toBe(true)
+
+      const { default: DistTuiPlugin } = await import(
+        `${pathToFileURL(distEntryPath).href}?t=${Date.now()}`
+      )
+
+      // Even on a flat theme where raised.base === raised.high === raised.max, hover synthesizes a distinct highlight
+      const flatSurface = "#18181b"
+      const flatTheme: any = {
+        text: {
+          base: "#e4e4e7",
+          muted: "#a1a1aa",
+          faint: "#71717a",
+          action: {
+            primary: { base: "#e4e4e7", hovered: "#ffffff", selected: "#60a5fa" },
+          },
+          feedback: {
+            info: { base: "#38bdf8" },
+            warning: { base: "#fbbf24" },
+            danger: { base: "#f87171" },
+            success: { base: "#4ade80" },
+          },
+        },
+        background: {
+          base: "#121215",
+          raised: {
+            base: flatSurface,
+            low: flatSurface,
+            high: flatSurface,
+            max: flatSurface,
+          },
+          action: {
+            primary: { base: flatSurface, hovered: flatSurface, selected: flatSurface },
+          },
+        },
+        border: { base: "#27272a", subtle: "#27272a", selected: "#60a5fa" },
+        surface: () => flatTheme,
+      }
+
+      const repoRoot = "/Users/dev/pkg-repo"
+      const wtDir = "/Users/dev/pkg-repo/test-workspaces/workspace-1"
+      const slots: any[] = []
+      const [prefs, setPrefs] = createStore<any>({
+        pinnedProjects: [],
+        collapsedProjects: [],
+        expandedSidebarWorktrees: [wtDir],
+        showAllGitProjects: false,
+        maxRecentProjects: 8,
+      })
+      const [cache, setCache] = createStore<any>({
+        worktreesByProject: { "proj-pkg": [wtDir] },
+        gitWorktreesByRoot: {},
+        gitByDirectory: {
+          [repoRoot]: { branch: "main", dirtyCount: 0, ahead: 0, behind: 0 },
+          [wtDir]: {
+            branch: "feat/pkg-hover",
+            dirtyCount: 1,
+            ahead: 0,
+            behind: 0,
+          },
+        },
+        lastSyncedAt: Date.now(),
+      })
+
+      const sessions = [
+        {
+          id: "sess-pkg",
+          projectID: "proj-pkg",
+          title: "Pkg Session",
+          time: { created: 1, updated: 5 },
+          location: { directory: wtDir },
+        },
+      ]
+
+      const boot = await testRender(() => null as any, { width: 36, height: 28 })
+      const mockContext: any = {
+        options: {},
+        location: { directory: wtDir },
+        app: { version: "2.2.5", channel: "latest" },
+        renderer: boot.renderer,
+        client: {
+          rpc: () => ({
+            inspectLocations: async () => ({
+              summaries: cache.gitByDirectory,
+              worktreesByRoot: {},
+            }),
+            events: { on: () => () => {} },
+          }),
+          worktree: {
+            refresh: async () => {},
+            list: async () => [{ directory: wtDir }],
+          },
+          vcs: {
+            get: async () => ({ data: { branch: { current: "feat/pkg-hover" } } }),
+            status: async () => ({ data: [] }),
+          },
+          session: { create: async () => ({}), move: async () => {} },
+        },
+        data: {
+          on: () => () => {},
+          listen: () => () => {},
+          session: {
+            list: () => sessions,
+            get: (id: string) => sessions.find((s) => s.id === id),
+            root: (id: string) => id,
+            family: (id: string) => [id],
+            cost: () => 0,
+            status: () => "idle",
+            pending: { list: () => [], sync: async () => {}, invalidate: () => {} },
+            sync: async () => {},
+            invalidate: () => {},
+            message: {
+              list: () => [],
+              get: () => undefined,
+              sync: async () => {},
+              invalidate: () => {},
+            },
+            permission: { list: () => [], sync: async () => {}, invalidate: () => {} },
+            form: {
+              list: () => [],
+              sync: async () => {},
+              invalidate: () => {},
+              reply: async () => {},
+              cancel: async () => {},
+            },
+          },
+          project: {
+            list: () => [
+              {
+                id: "proj-pkg",
+                canonical: repoRoot,
+                vcs: "git",
+                name: "pkg-repo",
+                sandboxes: [],
+                time: { created: 1, updated: 5, active: 5 },
+              },
+            ],
+            get: () => undefined,
+            sync: async () => {},
+            invalidate: () => {},
+            permission: { list: () => [], sync: async () => {}, invalidate: () => {} },
+          },
+          shell: { list: () => [], get: () => undefined, sync: async () => {}, invalidate: () => {} },
+          location: {
+            default: () => ({ directory: wtDir }),
+            sync: async () => {},
+            invalidate: () => {},
+            vcs: { info: () => undefined, sync: async () => {}, invalidate: () => {} },
+          },
+        },
+        theme: flatTheme,
+        themeMode: "dark",
+        keymap: { layer: () => {} },
+        storage: {
+          store: () => [prefs, async (m: any) => setPrefs(produce(m))],
+          memory: () => [cache, (m: any) => setCache(produce(m))],
+        },
+        ui: {
+          dialog: { show: () => {}, set: () => {}, clear: () => {} },
+          toast: { show: () => {} },
+          format: { path: (p: string) => p },
+          router: {
+            register: () => () => {},
+            navigate: () => {},
+            current: () => ({ type: "session", sessionID: "sess-pkg" }),
+          },
+          panel: { open: () => true, close: () => {}, current: () => undefined },
+          tabs: {
+            enabled: () => true,
+            list: () => [],
+            open: () => true,
+            focus: () => true,
+            move: () => true,
+            close: () => true,
+          },
+          slot: (c: any) => {
+            slots.push(c)
+            return () => {}
+          },
+        },
+      }
+
+      const cleanup = await DistTuiPlugin.setup(mockContext)
+      boot.renderer.destroy()
+
+      const sidebarClaim = slots.find((s) => s.before === "sidebar.footer")
+      const ui = await testRender(
+        () => sidebarClaim.render({ sessionID: "sess-pkg" }),
+        { width: 36, height: 28, backgroundColor: flatSurface },
+      )
+      mockContext.renderer = ui.renderer
+      await ui.renderOnce()
+
+      const lines = ui.captureCharFrame().split("\n")
+      const wtIdx = lines.findIndex((l) => l.includes("▾ feat/pkg-hover"))
+      const sessIdx = lines.findIndex((l) => l.includes("Pkg Session"))
+      const newSessIdx = lines.findIndex((l) => l.includes("+ New session"))
+      const newSessBranchIdx = newSessIdx + 1
+
+      const rowBg = (rowIdx: number) =>
+        ui.captureSpans().lines[rowIdx]!.spans[0]!.bg
+
+      expect(isVisiblyDistinctOnSurface(rowBg(wtIdx), flatSurface, 0.12)).toBe(
+        false,
+      )
+
+      // Hover worktree row -> highlights distinctly
+      await ui.mockMouse.moveTo(6, wtIdx)
+      await ui.renderOnce()
+      expect(isVisiblyDistinctOnSurface(rowBg(wtIdx), flatSurface, 0.12)).toBe(
+        true,
+      )
+
+      // Hover unfolded session row -> clears worktree row and highlights session row
+      await ui.mockMouse.moveTo(8, sessIdx)
+      await new Promise((r) => setTimeout(r, 5))
+      await ui.renderOnce()
+      expect(isVisiblyDistinctOnSurface(rowBg(wtIdx), flatSurface, 0.12)).toBe(
+        false,
+      )
+      expect(
+        isVisiblyDistinctOnSurface(rowBg(sessIdx), flatSurface, 0.12),
+      ).toBe(true)
+
+      // Hover '+ New session' workspace second line -> highlights both lines together
+      await ui.mockMouse.moveTo(5, newSessBranchIdx)
+      await new Promise((r) => setTimeout(r, 5))
+      await ui.renderOnce()
+      expect(
+        isVisiblyDistinctOnSurface(rowBg(newSessIdx), flatSurface, 0.12),
+      ).toBe(true)
+      expect(
+        isVisiblyDistinctOnSurface(rowBg(newSessBranchIdx), flatSurface, 0.12),
+      ).toBe(true)
+
+      if (cleanup) await cleanup()
+      ui.renderer.destroy()
+    } finally {
+      await rm(tmpPkgRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("syncs left session tab location/VCS info, retries transient startup sync errors, and spawns in nested worktrees before discovery", async () => {
+    const { ensureRuntimePluginSupport } = await import(
+      "@opentui/solid/runtime-plugin-support/configure"
+    )
+    const { ensurePluginRuntime } = await import("@opencode/plugin/runtime")
+    const { testRender } = await import("@opentui/solid")
+    const { createStore, produce } = await import("solid-js/store")
+
+    const runtimeMods = ensurePluginRuntime()
+    ensureRuntimePluginSupport({
+      additional: Object.fromEntries(
+        Object.entries(runtimeMods).map(([k, loader]) => [
+          k,
+          (loader as () => any)(),
+        ]),
+      ) as Record<string, any>,
+    })
+
+    const { default: TuiPlugin } = await import("../src/tui.js")
+
+    const makeThemeToken = (): any =>
+      new Proxy(
+        {},
+        {
+          get(_t, prop) {
+            if (prop === Symbol.toPrimitive) return () => "#ffffff"
+            if (
+              prop === "base" ||
+              prop === "muted" ||
+              prop === "faint" ||
+              prop === "selected" ||
+              prop === "focused" ||
+              prop === "hovered" ||
+              prop === "disabled" ||
+              prop === "low" ||
+              prop === "high" ||
+              prop === "max" ||
+              typeof prop === "number" ||
+              /^\d+$/.test(String(prop))
+            ) {
+              return "#aabbcc"
+            }
+            if (prop === "surface") return () => makeThemeToken()
+            return makeThemeToken()
+          },
+        },
+      )
+
+    const repoRoot = "/Users/dev/opencode-workspaces"
+    const nestedWt = "/Users/dev/opencode-workspaces/test-workspaces/workspace-1"
+    const siblingWt = "/Users/dev/opencode-workspaces-wt2"
+
+    const sessions: any[] = [
+      {
+        id: "sess-nested",
+        projectID: "proj-v2",
+        title: "Nested WT Session",
+        time: { created: 1, updated: 10 },
+        location: { directory: nestedWt },
+      },
+      {
+        id: "sess-tab-2",
+        projectID: "proj-v2",
+        title: "Open Tab 2",
+        time: { created: 1, updated: 8 },
+        location: { directory: siblingWt },
+      },
+    ]
+
+    const syncedLocations = new Set<string>()
+    const syncedVcsLocations = new Set<string>()
+    const openedTabs: string[] = []
+    const focusedTabs: string[] = []
+    const createdDirs: string[] = []
+    let failNextLocationSync = true
+    const slots: any[] = []
+
+    const [prefs, setPrefs] = createStore<any>({
+      pinnedProjects: [],
+      collapsedProjects: [],
+      expandedSidebarWorktrees: [],
+      showAllGitProjects: false,
+      maxRecentProjects: 8,
+    })
+    const [cache, setCache] = createStore<any>({
+      worktreesByProject: {},
+      gitWorktreesByRoot: {},
+      gitByDirectory: {},
+      lastSyncedAt: 0,
+    })
+
+    const boot = await testRender(() => null as any, { width: 38, height: 28 })
+    const mockContext: any = {
+      options: {},
+      location: { directory: repoRoot },
+      app: { version: "2.2.5", channel: "latest" },
+      renderer: boot.renderer,
+      client: {
+        rpc: () => ({
+          inspectLocations: async () => {
+            throw new Error("RPC pending")
+          },
+          events: { on: () => () => {} },
+        }),
+        worktree: {
+          refresh: async () => {},
+          list: async () => [],
+        },
+        vcs: {
+          get: async () => ({
+            data: {
+              provider: "git",
+              branch: { current: "test/workspace-1", default: "main" },
+            },
+          }),
+          status: async () => ({ data: [] }),
+        },
+        session: {
+          create: async ({ location }: any) => {
+            createdDirs.push(location.directory)
+            const created = {
+              id: "sess-spawned-nested",
+              projectID: "proj-v2",
+              title: "Spawned Nested",
+              time: { created: 10, updated: 20 },
+              location,
+            }
+            sessions.push(created)
+            return created
+          },
+          move: async () => {},
+        },
+      },
+      data: {
+        on: () => () => {},
+        listen: () => () => {},
+        session: {
+          list: () => sessions,
+          get: (id: string) => sessions.find((s) => s.id === id),
+          root: (id: string) => id,
+          family: (id: string) => [id],
+          cost: () => 0,
+          status: () => "idle",
+          pending: { list: () => [], sync: async () => {}, invalidate: () => {} },
+          sync: async () => {},
+          invalidate: () => {},
+          message: {
+            list: () => [],
+            get: () => undefined,
+            sync: async () => {},
+            invalidate: () => {},
+          },
+          permission: { list: () => [], sync: async () => {}, invalidate: () => {} },
+          form: {
+            list: () => [],
+            sync: async () => {},
+            invalidate: () => {},
+            reply: async () => {},
+            cancel: async () => {},
+          },
+        },
+        project: {
+          list: () => [
+            {
+              id: "proj-v2",
+              canonical: repoRoot,
+              vcs: "git",
+              name: "opencode-workspaces",
+              sandboxes: [], // OpenCode v2 always has empty sandboxes[]
+              time: { created: 1, updated: 10, active: 10 },
+            },
+          ],
+          get: () => ({
+            id: "proj-v2",
+            canonical: repoRoot,
+            vcs: "git",
+            name: "opencode-workspaces",
+            sandboxes: [],
+            time: { created: 1, updated: 10, active: 10 },
+          }),
+          sync: async () => {},
+          invalidate: () => {},
+          permission: { list: () => [], sync: async () => {}, invalidate: () => {} },
+        },
+        shell: { list: () => [], get: () => undefined, sync: async () => {}, invalidate: () => {} },
+        location: {
+          default: () => ({ directory: repoRoot }),
+          sync: async (loc?: { directory: string }) => {
+            if (failNextLocationSync) {
+              failNextLocationSync = false
+              throw new Error("Transient startup connection not ready")
+            }
+            if (loc?.directory) syncedLocations.add(loc.directory)
+          },
+          invalidate: () => {},
+          vcs: {
+            info: (loc?: { directory: string }) =>
+              loc?.directory && syncedVcsLocations.has(loc.directory)
+                ? { branch: { current: "test/workspace-1", default: "main" } }
+                : undefined,
+            sync: async (loc?: { directory: string }) => {
+              if (loc?.directory) syncedVcsLocations.add(loc.directory)
+            },
+            invalidate: () => {},
+          },
+        },
+      },
+      theme: makeThemeToken(),
+      themeMode: "dark",
+      keymap: { layer: () => {} },
+      storage: {
+        store: () => [prefs, async (m: any) => setPrefs(produce(m))],
+        memory: () => [cache, (m: any) => setCache(produce(m))],
+      },
+      ui: {
+        dialog: { show: () => {}, set: () => {}, clear: () => {} },
+        toast: { show: () => {} },
+        format: { path: (p: string) => p },
+        router: {
+          register: () => () => {},
+          navigate: () => {},
+          current: () => ({ type: "session", sessionID: "sess-nested" }),
+        },
+        panel: { open: () => true, close: () => {}, current: () => undefined },
+        tabs: {
+          enabled: () => true,
+          list: () => [
+            {
+              sessionID: "sess-nested",
+              active: true,
+              busy: false,
+              attention: false,
+            },
+            {
+              sessionID: "sess-tab-2",
+              active: false,
+              busy: false,
+              attention: false,
+            },
+          ],
+          open: (id: string) => {
+            openedTabs.push(id)
+            return true
+          },
+          focus: (id: string) => {
+            focusedTabs.push(id)
+            return true
+          },
+          move: () => true,
+          close: () => true,
+        },
+        slot: (c: any) => {
+          slots.push(c)
+          return () => {}
+        },
+      },
+    }
+
+    const cleanup = await TuiPlugin.setup(mockContext)
+    boot.renderer.destroy()
+
+    const sidebarClaim = slots.find((s) => s.before === "sidebar.footer")
+    const ui = await testRender(
+      () => sidebarClaim.render({ sessionID: "sess-nested" }),
+      { width: 38, height: 28 },
+    )
+    mockContext.renderer = ui.renderer
+    await ui.renderOnce()
+
+    // Immediately on first frame (before async refresh), '+ New session' targets nested worktree, NOT canonical 'main'
+    const initialLines = ui.captureCharFrame().split("\n")
+    const newSessIdx = initialLines.findIndex((l) => l.includes("+ New session"))
+    expect(initialLines[newSessIdx + 1]).toContain("workspace-1")
+
+    // Wait for initial refresh cycle -> retries failed initial location.sync AND syncs all open left session tabs!
+    await new Promise((r) => setTimeout(r, 150))
+    await ui.renderOnce()
+    expect(syncedLocations.has(nestedWt)).toBe(true)
+    expect(syncedVcsLocations.has(nestedWt)).toBe(true)
+    expect(syncedLocations.has(siblingWt)).toBe(true)
+    expect(syncedVcsLocations.has(siblingWt)).toBe(true)
+
+    // Clicking '+ New session' spawns inside `nestedWt` (not `repoRoot`!), opens & focuses left tab, and syncs location
+    const refreshedLines = ui.captureCharFrame().split("\n")
+    const btnIdx = refreshedLines.findIndex((l) => l.includes("+ New session"))
+    await ui.mockMouse.click(4, btnIdx)
+    await new Promise((r) => setTimeout(r, 50))
+
+    expect(createdDirs).toEqual([nestedWt])
+    expect(openedTabs).toContain("sess-spawned-nested")
+    expect(focusedTabs).toContain("sess-spawned-nested")
+
+    if (cleanup) await cleanup()
+    ui.renderer.destroy()
+  })
+
+  test("renders /ws switcher primary checkout as 'Project sessions  ⎇ <branch>' while keeping secondary worktree branch labels", async () => {
+    const { ensureRuntimePluginSupport } = await import(
+      "@opentui/solid/runtime-plugin-support/configure"
+    )
+    const { ensurePluginRuntime } = await import("@opencode/plugin/runtime")
+    const { testRender } = await import("@opentui/solid")
+    const { createStore, produce } = await import("solid-js/store")
+    const { migrateV1NewDesigns, resolveThemeDocument } = await import(
+      "@opencode/theme/tui"
+    )
+
+    const runtimeMods = ensurePluginRuntime()
+    ensureRuntimePluginSupport({
+      additional: Object.fromEntries(
+        Object.entries(runtimeMods).map(([k, loader]) => [
+          k,
+          (loader as () => any)(),
+        ]),
+      ) as Record<string, any>,
+    })
+
+    const { default: TuiPlugin } = await import("../src/tui.js")
+
+    const darkTheme = resolveThemeDocument(
+      migrateV1NewDesigns({
+        theme: {
+          primary: "#7aa2f7",
+          secondary: "#bb9af7",
+          accent: "#ff9e64",
+          error: "#f7768e",
+          warning: "#e0af68",
+          success: "#9ece6a",
+          info: "#7dcfff",
+          text: "#c0caf5",
+          textMuted: "#565f89",
+          background: "#1a1b26",
+          backgroundPanel: "#16161e",
+          backgroundElement: "#292e42",
+          border: "#3b4261",
+          borderActive: "#7aa2f7",
+          borderSubtle: "#292e42",
+          diffAdded: "#9ece6a",
+          diffRemoved: "#f7768e",
+          diffContext: "#565f89",
+          diffHunkHeader: "#7aa2f7",
+          diffHighlightAdded: "#9ece6a",
+          diffHighlightRemoved: "#f7768e",
+          diffAddedBg: "#20303b",
+          diffRemovedBg: "#37222c",
+          diffContextBg: "#1a1b26",
+          diffLineNumber: "#565f89",
+          diffAddedLineNumberBg: "#20303b",
+          diffRemovedLineNumberBg: "#37222c",
+          markdownText: "#c0caf5",
+          markdownHeading: "#bb9af7",
+          markdownLink: "#7aa2f7",
+          markdownLinkText: "#7dcfff",
+          markdownCode: "#9ece6a",
+          markdownBlockQuote: "#e0af68",
+          markdownEmph: "#e0af68",
+          markdownStrong: "#ff9e64",
+          markdownHorizontalRule: "#565f89",
+          markdownListItem: "#2e7de9",
+          markdownListEnumeration: "#7dcfff",
+          markdownImage: "#7aa2f7",
+          markdownImageText: "#7dcfff",
+          markdownCodeBlock: "#c0caf5",
+          syntaxComment: "#565f89",
+          syntaxKeyword: "#bb9af7",
+          syntaxFunction: "#7aa2f7",
+          syntaxVariable: "#c0caf5",
+          syntaxString: "#9ece6a",
+          syntaxNumber: "#ff9e64",
+          syntaxType: "#2ac3de",
+          syntaxOperator: "#89ddff",
+          syntaxPunctuation: "#c0caf5",
+        },
+      } as any),
+      "dark",
+    )
+
+    const repoRoot = "/Users/dev/opencode-workspaces"
+    const wt1Dir = "/Users/dev/opencode-workspaces/test-workspaces/workspace-1"
+    let dialogRenderFn: (() => any) | undefined
+    const commands: any[] = []
+
+    const [prefs, setPrefs] = createStore<any>({
+      pinnedProjects: [],
+      collapsedProjects: [],
+      expandedSidebarWorktrees: [],
+      showAllGitProjects: false,
+      maxRecentProjects: 8,
+    })
+    const [cache, setCache] = createStore<any>({
+      worktreesByProject: { "proj-ws": [wt1Dir] },
+      gitWorktreesByRoot: {},
+      gitByDirectory: {
+        [repoRoot]: {
+          branch: "feat/in-place-branch",
+          dirtyCount: 2,
+          ahead: 0,
+          behind: 0,
+        },
+        [wt1Dir]: {
+          branch: "test/workspace-1",
+          dirtyCount: 0,
+          ahead: 0,
+          behind: 0,
+        },
+      },
+      lastSyncedAt: Date.now(),
+    })
+
+    const sessions = [
+      {
+        id: "sess-root-1",
+        projectID: "proj-ws",
+        title: "Root Session A",
+        time: { created: 1, updated: 10 },
+        location: { directory: repoRoot },
+      },
+      {
+        id: "sess-wt-1",
+        projectID: "proj-ws",
+        title: "Worktree Session B",
+        time: { created: 2, updated: 8 },
+        location: { directory: wt1Dir },
+      },
+    ]
+
+    const boot = await testRender(() => null as any, { width: 68, height: 26 })
+    const mockContext: any = {
+      options: {},
+      location: { directory: repoRoot },
+      app: { version: "2.2.5", channel: "latest" },
+      renderer: boot.renderer,
+      client: {
+        rpc: () => ({
+          inspectLocations: async () => ({
+            summaries: cache.gitByDirectory,
+            worktreesByRoot: {},
+          }),
+          events: { on: () => () => {} },
+        }),
+        worktree: {
+          refresh: async () => {},
+          list: async () => [{ directory: wt1Dir }],
+        },
+        vcs: {
+          get: async () => ({ data: { branch: { current: "feat/in-place-branch" } } }),
+          status: async () => ({ data: [] }),
+        },
+        session: { create: async () => ({}), move: async () => {} },
+      },
+      data: {
+        on: () => () => {},
+        listen: () => () => {},
+        session: {
+          list: () => sessions,
+          get: (id: string) => sessions.find((s) => s.id === id),
+          root: (id: string) => id,
+          family: (id: string) => [id],
+          cost: () => 0,
+          status: () => "idle",
+          pending: { list: () => [], sync: async () => {}, invalidate: () => {} },
+          sync: async () => {},
+          invalidate: () => {},
+          message: { list: () => [], get: () => undefined, sync: async () => {}, invalidate: () => {} },
+          permission: { list: () => [], sync: async () => {}, invalidate: () => {} },
+          form: { list: () => [], sync: async () => {}, invalidate: () => {}, reply: async () => {}, cancel: async () => {} },
+        },
+        project: {
+          list: () => [
+            {
+              id: "proj-ws",
+              canonical: repoRoot,
+              vcs: "git",
+              name: "opencode-workspaces",
+              sandboxes: [],
+              time: { created: 1, updated: 10, active: 10 },
+            },
+          ],
+          get: () => undefined,
+          sync: async () => {},
+          invalidate: () => {},
+          permission: { list: () => [], sync: async () => {}, invalidate: () => {} },
+        },
+        shell: { list: () => [], get: () => undefined, sync: async () => {}, invalidate: () => {} },
+        location: {
+          default: () => ({ directory: repoRoot }),
+          sync: async () => {},
+          invalidate: () => {},
+          vcs: { info: () => undefined, sync: async () => {}, invalidate: () => {} },
+        },
+      },
+      theme: darkTheme,
+      themeMode: "dark",
+      keymap: {
+        layer: (fn: any) => {
+          const l = fn()
+          if (l.commands) commands.push(...l.commands)
+        },
+      },
+      storage: {
+        store: () => [prefs, async (m: any) => setPrefs(produce(m))],
+        memory: () => [cache, (m: any) => setCache(produce(m))],
+      },
+      ui: {
+        dialog: {
+          show: (renderFn: () => any) => {
+            dialogRenderFn = renderFn
+          },
+          set: () => {},
+          clear: () => {},
+        },
+        toast: { show: () => {} },
+        format: { path: (p: string) => p },
+        router: {
+          register: () => () => {},
+          navigate: () => {},
+          current: () => ({ type: "session", sessionID: "sess-root-1" }),
+        },
+        panel: { open: () => true, close: () => {}, current: () => undefined },
+        tabs: {
+          enabled: () => true,
+          list: () => [],
+          open: () => true,
+          focus: () => true,
+          move: () => true,
+          close: () => true,
+        },
+        slot: () => () => {},
+      },
+    }
+
+    const cleanup = await TuiPlugin.setup(mockContext)
+    boot.renderer.destroy()
+
+    const wsCmd = commands.find((c) => c.id === "workspaces.switcher")
+    await wsCmd.run("/ws")
+    expect(dialogRenderFn).toBeDefined()
+
+    const dialogUi = await testRender(() => dialogRenderFn!(), {
+      width: 68,
+      height: 26,
+    })
+    mockContext.renderer = dialogUi.renderer
+    await dialogUi.renderOnce()
+
+    const frame = dialogUi.captureCharFrame()
+    const lines = frame.split("\n")
+
+    const canonicalLine = lines.find((l) => l.includes("Project sessions"))!
+    const secondaryLine = lines.find((l) => l.includes("test/workspace-1"))!
+
+    expect(canonicalLine).toBeDefined()
+    expect(canonicalLine).toContain("⎇ feat/in-place-branch")
+    expect(frame).toContain("└─ ▸ Root Session A")
+    expect(secondaryLine).toBeDefined()
+    expect(secondaryLine).toContain("workspace-1")
+    expect(frame).toContain("└─ · Worktree Session B")
+
+    if (cleanup) await cleanup()
+    dialogUi.renderer.destroy()
+  })
+
+  test("deletes sessions via right-click context menu, hover '×' button, and 'x' shortcut in Worktrees pane", async () => {
+    const { MouseButton } = await import("@opentui/core")
+    const { ensureRuntimePluginSupport } = await import(
+      "@opentui/solid/runtime-plugin-support/configure"
+    )
+    const { ensurePluginRuntime } = await import("@opencode/plugin/runtime")
+    const { testRender } = await import("@opentui/solid")
+    const { createStore, produce } = await import("solid-js/store")
+
+    const runtimeMods = ensurePluginRuntime()
+    ensureRuntimePluginSupport({
+      additional: Object.fromEntries(
+        Object.entries(runtimeMods).map(([k, loader]) => [
+          k,
+          (loader as () => any)(),
+        ]),
+      ) as Record<string, any>,
+    })
+
+    const { default: TuiPlugin } = await import("../src/tui.js")
+
+    const makeThemeToken = (): any =>
+      new Proxy(
+        {},
+        {
+          get(_t, prop) {
+            if (prop === Symbol.toPrimitive) return () => "#ffffff"
+            if (
+              prop === "base" ||
+              prop === "muted" ||
+              prop === "faint" ||
+              prop === "selected" ||
+              prop === "focused" ||
+              prop === "hovered" ||
+              prop === "disabled" ||
+              prop === "low" ||
+              prop === "high" ||
+              prop === "max" ||
+              typeof prop === "number" ||
+              /^\d+$/.test(String(prop))
+            ) {
+              return "#aabbcc"
+            }
+            if (prop === "surface") return () => makeThemeToken()
+            return makeThemeToken()
+          },
+        },
+      )
+
+    const repoRoot = "/Users/dev/del-repo"
+    const wtDir = "/Users/dev/del-repo/test-workspaces/workspace-1"
+    const removedSessionIDs: string[] = []
+    const closedTabs: string[] = []
+    const navigatedSessions: string[] = []
+    const selectCalls: any[] = []
+    const confirmCalls: any[] = []
+    let activeSessionID = "sess-1"
+    const slots: any[] = []
+
+    const sessions = [
+      {
+        id: "sess-1",
+        projectID: "proj-del",
+        title: "First Session",
+        time: { created: 1, updated: 30 },
+        location: { directory: wtDir },
+      },
+      {
+        id: "sess-2",
+        projectID: "proj-del",
+        title: "Second Session",
+        time: { created: 2, updated: 20 },
+        location: { directory: wtDir },
+      },
+      {
+        id: "sess-3",
+        projectID: "proj-del",
+        title: "Third Session",
+        time: { created: 3, updated: 10 },
+        location: { directory: wtDir },
+      },
+    ]
+
+    const [prefs, setPrefs] = createStore<any>({
+      pinnedProjects: [],
+      collapsedProjects: [],
+      expandedSidebarWorktrees: [wtDir],
+      showAllGitProjects: false,
+      maxRecentProjects: 8,
+    })
+    const [cache, setCache] = createStore<any>({
+      worktreesByProject: { "proj-del": [wtDir] },
+      gitWorktreesByRoot: {},
+      gitByDirectory: {
+        [repoRoot]: { branch: "main", dirtyCount: 0, ahead: 0, behind: 0 },
+        [wtDir]: {
+          branch: "feat/delete-session",
+          dirtyCount: 0,
+          ahead: 0,
+          behind: 0,
+        },
+      },
+      lastSyncedAt: Date.now(),
+    })
+
+    const boot = await testRender(() => null as any, { width: 38, height: 28 })
+    const mockContext: any = {
+      options: {},
+      location: { directory: wtDir },
+      app: { version: "2.2.5", channel: "latest" },
+      renderer: boot.renderer,
+      client: {
+        rpc: () => ({
+          inspectLocations: async () => ({
+            summaries: cache.gitByDirectory,
+            worktreesByRoot: {},
+          }),
+          events: { on: () => () => {} },
+        }),
+        worktree: {
+          refresh: async () => {},
+          list: async () => [{ directory: wtDir }],
+        },
+        vcs: {
+          get: async () => ({ data: { branch: { current: "feat/delete-session" } } }),
+          status: async () => ({ data: [] }),
+        },
+        session: {
+          create: async () => ({}),
+          move: async () => {},
+          remove: async ({ sessionID }: { sessionID: string }) => {
+            removedSessionIDs.push(sessionID)
+          },
+        },
+      },
+      data: {
+        on: () => () => {},
+        listen: () => () => {},
+        session: {
+          list: () => sessions,
+          get: (id: string) => sessions.find((s) => s.id === id),
+          root: (id: string) => id,
+          family: (id: string) => [id],
+          cost: () => 0,
+          status: () => "idle",
+          pending: { list: () => [], sync: async () => {}, invalidate: () => {} },
+          sync: async () => {},
+          invalidate: () => {},
+          message: { list: () => [], get: () => undefined, sync: async () => {}, invalidate: () => {} },
+          permission: { list: () => [], sync: async () => {}, invalidate: () => {} },
+          form: { list: () => [], sync: async () => {}, invalidate: () => {}, reply: async () => {}, cancel: async () => {} },
+        },
+        project: {
+          list: () => [
+            {
+              id: "proj-del",
+              canonical: repoRoot,
+              vcs: "git",
+              name: "del-repo",
+              sandboxes: [],
+              time: { created: 1, updated: 30, active: 30 },
+            },
+          ],
+          get: () => undefined,
+          sync: async () => {},
+          invalidate: () => {},
+          permission: { list: () => [], sync: async () => {}, invalidate: () => {} },
+        },
+        shell: { list: () => [], get: () => undefined, sync: async () => {}, invalidate: () => {} },
+        location: {
+          default: () => ({ directory: wtDir }),
+          sync: async () => {},
+          invalidate: () => {},
+          vcs: { info: () => undefined, sync: async () => {}, invalidate: () => {} },
+        },
+      },
+      theme: makeThemeToken(),
+      themeMode: "dark",
+      keymap: { layer: () => {} },
+      storage: {
+        store: () => [prefs, async (m: any) => setPrefs(produce(m))],
+        memory: () => [cache, (m: any) => setCache(produce(m))],
+      },
+      ui: {
+        dialog: {
+          show: () => {},
+          set: () => {},
+          clear: () => {},
+          select: async (opts: any) => {
+            selectCalls.push(opts)
+            return "delete"
+          },
+          confirm: async (opts: any) => {
+            confirmCalls.push(opts)
+            return true
+          },
+        },
+        toast: { show: () => {} },
+        format: { path: (p: string) => p },
+        router: {
+          register: () => () => {},
+          navigate: (dest: any) => {
+            if (dest.type === "session") {
+              activeSessionID = dest.sessionID
+              navigatedSessions.push(dest.sessionID)
+            }
+          },
+          current: () => ({ type: "session", sessionID: activeSessionID }),
+        },
+        panel: { open: () => true, close: () => {}, current: () => undefined },
+        tabs: {
+          enabled: () => true,
+          list: () => [
+            { sessionID: "sess-1", active: true, busy: false, attention: false },
+            { sessionID: "sess-2", active: false, busy: false, attention: false },
+          ],
+          open: () => true,
+          focus: () => true,
+          move: () => true,
+          close: (id?: string) => {
+            if (id) closedTabs.push(id)
+            return true
+          },
+        },
+        slot: (c: any) => {
+          slots.push(c)
+          return () => {}
+        },
+      },
+    }
+
+    const cleanup = await TuiPlugin.setup(mockContext)
+    boot.renderer.destroy()
+
+    const sidebarClaim = slots.find((s) => s.before === "sidebar.footer")
+    const sidebarUi = await testRender(
+      () => sidebarClaim.render({ sessionID: activeSessionID }),
+      { width: 38, height: 28 },
+    )
+    mockContext.renderer = sidebarUi.renderer
+    await sidebarUi.renderOnce()
+
+    // 1. Right-click on 'Second Session' -> opens context menu (without navigating!), deletes 'sess-2', closes tab, and removes row
+    const initialLines = sidebarUi.captureCharFrame().split("\n")
+    const secondIdx = initialLines.findIndex((l) =>
+      l.includes("Second Session"),
+    )
+    expect(secondIdx).toBeGreaterThan(0)
+
+    await sidebarUi.mockMouse.click(10, secondIdx, MouseButton.RIGHT)
+    await new Promise((r) => setTimeout(r, 40))
+    await sidebarUi.renderOnce()
+
+    expect(selectCalls).toHaveLength(1)
+    expect(selectCalls[0]!.title).toBe("Second Session")
+    expect(selectCalls[0]!.options.map((o: any) => o.value)).toEqual([
+      "delete",
+      "open",
+      "close-tab",
+    ])
+    expect(navigatedSessions).toEqual([])
+    expect(removedSessionIDs).toEqual(["sess-2"])
+    expect(closedTabs).toEqual(["sess-2"])
+    expect(sidebarUi.captureCharFrame()).not.toContain("Second Session")
+
+    // 2. Hover 'First Session' (active) -> reveals '×' delete button; clicking '×' deletes 'sess-1' and navigates to remaining 'sess-3'
+    const afterRightClickLines = sidebarUi.captureCharFrame().split("\n")
+    const firstIdx = afterRightClickLines.findIndex((l) =>
+      l.includes("First Session"),
+    )
+    expect(firstIdx).toBeGreaterThan(0)
+
+    await sidebarUi.mockMouse.moveTo(10, firstIdx)
+    await sidebarUi.renderOnce()
+    const hoveredFirstLine = sidebarUi.captureCharFrame().split("\n")[firstIdx]!
+    const deleteCol = hoveredFirstLine.lastIndexOf("×")
+    expect(deleteCol).toBeGreaterThan(15)
+
+    await sidebarUi.mockMouse.click(deleteCol, firstIdx, MouseButton.LEFT)
+    await new Promise((r) => setTimeout(r, 40))
+    await sidebarUi.renderOnce()
+
+    expect(removedSessionIDs).toEqual(["sess-2", "sess-1"])
+    expect(closedTabs).toEqual(["sess-2", "sess-1"])
+    expect(navigatedSessions).toContain("sess-3")
+    expect(sidebarUi.captureCharFrame()).not.toContain("First Session")
+    expect(sidebarUi.captureCharFrame()).toContain("Third Session")
+
+    sidebarUi.renderer.destroy()
+
+    // 3. Pressing 'x' on a selected session row in WorkspacesPanel (Ctrl+G) deletes that session (not the worktree)
+    const panelClaim = slots.find((s) => s.append === "session.panel")
+    const panelUi = await testRender(
+      () =>
+        panelClaim.render({
+          name: "opencode-workspaces.panel",
+          sessionID: "sess-3",
+          width: 44,
+          presentation: "panel",
+          focused: true,
+          focus: () => {},
+          close: () => {},
+          toggleFullscreen: () => {},
+        }),
+      { width: 44, height: 24 },
+    )
+    mockContext.renderer = panelUi.renderer
+    await panelUi.renderOnce()
+    expect(panelUi.captureCharFrame()).toContain("Third Session")
+
+    panelUi.mockInput.pressKey("x")
+    await new Promise((r) => setTimeout(r, 40))
+    await panelUi.renderOnce()
+
+    expect(removedSessionIDs).toEqual(["sess-2", "sess-1", "sess-3"])
+    expect(panelUi.captureCharFrame()).not.toContain("Third Session")
+
+    if (cleanup) await cleanup()
+    panelUi.renderer.destroy()
+  })
 })
