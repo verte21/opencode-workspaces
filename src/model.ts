@@ -253,6 +253,25 @@ export function aggregateStatus(
   return { status: best, detail }
 }
 
+/**
+ * Computes the status rolled up onto a parent worktree row from child sessions
+ * that are NOT currently rendered underneath it. When child sessions are unfolded,
+ * their `!` / `●` glyphs and `perm` / `ask` / `busy` badges appear only on the
+ * session rows instead of duplicating onto the parent worktree row.
+ */
+export function rollupHiddenWorktreeStatus(
+  worktree: Pick<WorktreeNode, "sessions">,
+  visibleSessions: readonly Pick<WorkspaceSessionNode, "id">[],
+): { readonly status: AgentStatus; readonly detail?: AgentStatusDetail } {
+  if (worktree.sessions.length === 0) return { status: "idle" }
+  if (visibleSessions.length === 0) {
+    return aggregateStatus(worktree.sessions)
+  }
+  const visibleIDs = new Set(visibleSessions.map((s) => s.id))
+  const hidden = worktree.sessions.filter((s) => !visibleIDs.has(s.id))
+  return aggregateStatus(hidden)
+}
+
 export function matchSessionWorktree(
   sessionDir: string,
   knownWorktreeDirs: readonly string[],

@@ -4,6 +4,7 @@ import { For, Show, createEffect, createMemo } from "solid-js"
 import {
   dirBasename,
   resolveWorkspaceNewSessionDirectory,
+  rollupHiddenWorktreeStatus,
   type ProjectNode,
   type WorktreeNode,
 } from "../model.js"
@@ -15,6 +16,8 @@ import {
 import { HoverMarqueeText } from "./marquee.js"
 import type { WorkspacesController } from "./state.js"
 import {
+  resolveSidebarAccentHoverBg,
+  resolveSidebarHoverBg,
   resolveStatusColor,
   sameStringArray,
   statusGlyph,
@@ -26,11 +29,14 @@ function renderSidebarWorktreeRow(
   wtAccessor: () => WorktreeNode | undefined,
   indented: boolean,
   worktreeHover: HoverKeyController,
+  chevronHover: HoverKeyController,
   plusHover: HoverKeyController,
   sessionHover: HoverKeyController,
 ) {
   const { context } = ctrl
   const getRenderer = () => context.renderer
+  const hoverBg = () => resolveSidebarHoverBg(context.theme)
+  const accentHoverBg = () => resolveSidebarAccentHoverBg(context.theme)
 
   return (
     <Show when={wtAccessor()}>
@@ -52,7 +58,14 @@ function renderSidebarWorktreeRow(
           [],
           { equals: sameStringArray },
         )
+        const hiddenRollup = createMemo(() =>
+          rollupHiddenWorktreeStatus(wt(), visibleSessions()),
+        )
+        const rowStatus = () => hiddenRollup().status
+        const rowStatusDetail = () => hiddenRollup().detail
         const isRowHovered = () => worktreeHover.hoveredKey() === wt().directory
+        const isChevronHovered = () =>
+          chevronHover.hoveredKey() === wt().directory
         const isPlusHovered = () => plusHover.hoveredKey() === wt().directory
 
         return (
@@ -63,11 +76,7 @@ function renderSidebarWorktreeRow(
               alignItems="center"
               width="100%"
               paddingLeft={indented ? 2 : 0}
-              backgroundColor={
-                isRowHovered()
-                  ? context.theme.background.raised.base
-                  : undefined
-              }
+              backgroundColor={isRowHovered() ? hoverBg() : undefined}
               onMouseOver={() => worktreeHover.onEnter(wt().directory)}
               onMouseOut={() => worktreeHover.onLeave(wt().directory)}
               onMouseUp={() => {
@@ -92,6 +101,8 @@ function renderSidebarWorktreeRow(
                 <box
                   paddingRight={1}
                   flexShrink={0}
+                  onMouseOver={() => chevronHover.onEnter(wt().directory)}
+                  onMouseOut={() => chevronHover.onLeave(wt().directory)}
                   onMouseUp={(event) => {
                     if (hasSessions()) {
                       event.stopPropagation()
@@ -101,19 +112,25 @@ function renderSidebarWorktreeRow(
                 >
                   <text
                     fg={
-                      isRowHovered() &&
                       hasSessions() &&
+                      isChevronHovered() &&
                       !wt().isCurrent &&
-                      wt().status === "idle"
-                        ? context.theme.text.muted
-                        : resolveStatusColor(
-                            context.theme,
-                            wt().status,
-                            wt().isCurrent,
-                          )
+                      rowStatus() === "idle"
+                        ? context.theme.text.base
+                        : isRowHovered() &&
+                            !wt().isCurrent &&
+                            rowStatus() === "idle"
+                          ? context.theme.text.muted
+                          : resolveStatusColor(
+                              context.theme,
+                              rowStatus(),
+                              wt().isCurrent,
+                            )
                     }
                     attributes={
-                      wt().status !== "idle" || wt().isCurrent
+                      rowStatus() !== "idle" ||
+                      wt().isCurrent ||
+                      (hasSessions() && isChevronHovered())
                         ? TextAttributes.BOLD
                         : TextAttributes.NONE
                     }
@@ -124,7 +141,7 @@ function renderSidebarWorktreeRow(
                       ? isExpanded()
                         ? "▾"
                         : "▸"
-                      : statusGlyph(wt().status, false)}
+                      : statusGlyph(rowStatus(), false)}
                   </text>
                 </box>
                 <HoverMarqueeText
@@ -132,7 +149,7 @@ function renderSidebarWorktreeRow(
                   text={wt().label}
                   active={isRowHovered()}
                   fg={
-                    wt().isCurrent || wt().status !== "idle" || isRowHovered()
+                    wt().isCurrent || rowStatus() !== "idle" || isRowHovered()
                       ? context.theme.text.base
                       : context.theme.text.muted
                   }
@@ -145,6 +162,11 @@ function renderSidebarWorktreeRow(
 
               <box flexDirection="row" columnGap={1} flexShrink={0}>
                 <box
+                  backgroundColor={
+                    isRowHovered() && isPlusHovered()
+                      ? accentHoverBg()
+                      : undefined
+                  }
                   onMouseOver={() => plusHover.onEnter(wt().directory)}
                   onMouseOut={() => plusHover.onLeave(wt().directory)}
                   onMouseUp={(event) => {
@@ -159,11 +181,7 @@ function renderSidebarWorktreeRow(
                   }}
                 >
                   <text
-                    fg={
-                      isPlusHovered()
-                        ? context.theme.text.action.primary.selected
-                        : context.theme.text.action.primary.base
-                    }
+                    fg={context.theme.text.action.primary.selected}
                     attributes={
                       isPlusHovered()
                         ? TextAttributes.BOLD
@@ -175,12 +193,12 @@ function renderSidebarWorktreeRow(
                     {isRowHovered() ? "+" : " "}
                   </text>
                 </box>
-                <Show when={statusLabel(wt().status, wt().statusDetail)}>
+                <Show when={statusLabel(rowStatus(), rowStatusDetail())}>
                   {(badge) => (
                     <text
                       fg={resolveStatusColor(
                         context.theme,
-                        wt().status,
+                        rowStatus(),
                         wt().isCurrent,
                       )}
                       selectable={false}
@@ -192,7 +210,11 @@ function renderSidebarWorktreeRow(
                 </Show>
                 <Show when={wt().dirtyCount > 0}>
                   <text
-                    fg={context.theme.text.faint}
+                    fg={
+                      isRowHovered()
+                        ? context.theme.text.muted
+                        : context.theme.text.faint
+                    }
                     selectable={false}
                     wrapMode="none"
                   >
@@ -201,7 +223,11 @@ function renderSidebarWorktreeRow(
                 </Show>
                 <Show when={wt().ahead > 0}>
                   <text
-                    fg={context.theme.text.faint}
+                    fg={
+                      isRowHovered()
+                        ? context.theme.text.muted
+                        : context.theme.text.faint
+                    }
                     selectable={false}
                     wrapMode="none"
                   >
@@ -210,7 +236,11 @@ function renderSidebarWorktreeRow(
                 </Show>
                 <Show when={wt().behind > 0}>
                   <text
-                    fg={context.theme.text.faint}
+                    fg={
+                      isRowHovered()
+                        ? context.theme.text.muted
+                        : context.theme.text.faint
+                    }
                     selectable={false}
                     wrapMode="none"
                   >
@@ -239,9 +269,7 @@ function renderSidebarWorktreeRow(
                         width="100%"
                         paddingLeft={indented ? 4 : 2}
                         backgroundColor={
-                          isSessHovered()
-                            ? context.theme.background.raised.base
-                            : undefined
+                          isSessHovered() ? hoverBg() : undefined
                         }
                         onMouseOver={() => sessionHover.onEnter(session().id)}
                         onMouseOut={() => sessionHover.onLeave(session().id)}
@@ -261,18 +289,28 @@ function renderSidebarWorktreeRow(
                           overflow="hidden"
                         >
                           <text
-                            fg={context.theme.text.faint}
+                            fg={
+                              isSessHovered()
+                                ? context.theme.text.muted
+                                : context.theme.text.faint
+                            }
                             selectable={false}
                             wrapMode="none"
                           >
                             {isLast() ? "└─" : "├─"}
                           </text>
                           <text
-                            fg={resolveStatusColor(
-                              context.theme,
-                              session().status,
-                              session().isCurrent,
-                            )}
+                            fg={
+                              isSessHovered() &&
+                              !session().isCurrent &&
+                              session().status === "idle"
+                                ? context.theme.text.muted
+                                : resolveStatusColor(
+                                    context.theme,
+                                    session().status,
+                                    session().isCurrent,
+                                  )
+                            }
                             attributes={
                               session().status !== "idle" || session().isCurrent
                                 ? TextAttributes.BOLD
@@ -288,11 +326,11 @@ function renderSidebarWorktreeRow(
                             text={session().title}
                             active={isSessHovered()}
                             fg={
-                              session().isCurrent || isSessHovered()
+                              session().isCurrent ||
+                              session().status !== "idle" ||
+                              isSessHovered()
                                 ? context.theme.text.base
-                                : session().status !== "idle"
-                                  ? context.theme.text.base
-                                  : context.theme.text.muted
+                                : context.theme.text.muted
                             }
                             attributes={
                               session().isCurrent
@@ -350,11 +388,15 @@ export const WorkspacesSidebar = (props: {
   const { context } = ctrl
   const getRenderer = () => context.renderer
 
+  const headerHover = createHoverFlagSignal()
+  const headerHovered = headerHover.hovered
   const worktreeHover = createHoverKeySignal()
+  const chevronHover = createHoverKeySignal()
   const plusHover = createHoverKeySignal()
   const subSessionHover = createHoverKeySignal()
   const newSessionHover = createHoverFlagSignal()
   const newSessionHovered = newSessionHover.hovered
+  const hoverBg = () => resolveSidebarHoverBg(context.theme)
 
   createEffect(() => {
     ctrl.syncSessionWorkspace(props.sessionID)
@@ -369,8 +411,11 @@ export const WorkspacesSidebar = (props: {
   )
 
   const currentProject = createMemo(() => tree().projects[0])
+  const resolveTargetWorktree = (proj: ProjectNode) =>
+    proj.worktrees.find((wt) => wt.isCurrent) ?? proj.worktrees[0]
+
   const lowerHalfHeight = createMemo(() =>
-    Math.max(8, Math.floor((ctrl.terminalHeight() - 4) / 2)),
+    Math.max(10, Math.ceil((ctrl.terminalHeight() - 3) / 2)),
   )
 
   const sidebarTreeHeight = createMemo(() => {
@@ -385,13 +430,12 @@ export const WorkspacesSidebar = (props: {
       ).length
       return sum + 1 + Math.min(3, activeBg)
     }, 0)
-    // Top border (1) + paddingTop (1) + header (1) + marginTop (1) + "+ New session" (1) + paddingBottom (1) = 6
-    const maxRows = Math.max(2, lowerHalfHeight() - 6)
+    const newSessionRows = resolveTargetWorktree(proj)?.label ? 2 : 1
+    // Top border (1) + paddingTop (1) + header (1) + marginTop (1) + newSessionRows (1..2) + paddingBottom (1)
+    const chromeRows = 5 + newSessionRows
+    const maxRows = Math.max(2, lowerHalfHeight() - chromeRows)
     return Math.max(1, Math.min(contentRows, maxRows))
   })
-
-  const resolveTargetWorktree = (proj: ProjectNode) =>
-    proj.worktrees.find((wt) => wt.isCurrent) ?? proj.worktrees[0]
 
   const spawnSessionInCurrentWorktree = (proj: ProjectNode) => {
     const currentWt = resolveTargetWorktree(proj)
@@ -433,10 +477,17 @@ export const WorkspacesSidebar = (props: {
               alignItems="center"
               width="100%"
               flexShrink={0}
+              backgroundColor={headerHovered() ? hoverBg() : undefined}
+              onMouseOver={() => headerHover.onEnter()}
+              onMouseOut={() => headerHover.onLeave()}
               onMouseUp={() => props.onTogglePanel()}
             >
               <text
-                fg={context.theme.text.base}
+                fg={
+                  headerHovered()
+                    ? context.theme.text.action.primary.selected
+                    : context.theme.text.base
+                }
                 attributes={TextAttributes.BOLD}
                 selectable={false}
                 wrapMode="none"
@@ -445,7 +496,11 @@ export const WorkspacesSidebar = (props: {
               </text>
               <Show when={proj().worktrees.length > 1}>
                 <text
-                  fg={context.theme.text.faint}
+                  fg={
+                    headerHovered()
+                      ? context.theme.text.muted
+                      : context.theme.text.faint
+                  }
                   selectable={false}
                   wrapMode="none"
                 >
@@ -470,6 +525,7 @@ export const WorkspacesSidebar = (props: {
                       ),
                       false,
                       worktreeHover,
+                      chevronHover,
                       plusHover,
                       subSessionHover,
                     )
@@ -479,17 +535,11 @@ export const WorkspacesSidebar = (props: {
             </scrollbox>
 
             <box
-              flexDirection="row"
-              justifyContent="space-between"
-              alignItems="center"
+              flexDirection="column"
               width="100%"
               marginTop={1}
               flexShrink={0}
-              backgroundColor={
-                newSessionHovered()
-                  ? context.theme.background.raised.base
-                  : undefined
-              }
+              backgroundColor={newSessionHovered() ? hoverBg() : undefined}
               onMouseOver={() => newSessionHover.onEnter()}
               onMouseOut={() => newSessionHover.onLeave()}
               onMouseUp={(event) => {
@@ -500,13 +550,12 @@ export const WorkspacesSidebar = (props: {
               <text
                 fg={
                   newSessionHovered()
-                    ? context.theme.text.action.primary.base
+                    ? context.theme.text.action.primary.selected
                     : context.theme.text.base
                 }
                 attributes={TextAttributes.BOLD}
                 selectable={false}
                 wrapMode="none"
-                flexShrink={0}
               >
                 + New session
               </text>
@@ -514,10 +563,10 @@ export const WorkspacesSidebar = (props: {
                 {(branch) => (
                   <box
                     flexDirection="row"
-                    justifyContent="flex-end"
-                    flexShrink={1}
+                    width="100%"
+                    paddingLeft={2}
                     overflow="hidden"
-                    marginLeft={1}
+                    shouldFill={false}
                   >
                     <HoverMarqueeText
                       renderer={getRenderer}
@@ -525,8 +574,8 @@ export const WorkspacesSidebar = (props: {
                       active={newSessionHovered()}
                       fg={
                         newSessionHovered()
-                          ? context.theme.text.muted
-                          : context.theme.text.faint
+                          ? context.theme.text.base
+                          : context.theme.text.muted
                       }
                       flexShrink={1}
                     />

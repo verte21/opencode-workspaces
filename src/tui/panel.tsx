@@ -6,11 +6,17 @@ import {
   type ScrollBoxRenderable,
 } from "@opentui/core"
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js"
-import { dirBasename, type FlatTreeRow } from "../model.js"
+import {
+  dirBasename,
+  rollupHiddenWorktreeStatus,
+  type FlatTreeRow,
+} from "../model.js"
 import { createHoverFlagSignal, createHoverKeySignal } from "./hover.js"
 import { HoverMarqueeText } from "./marquee.js"
 import type { WorkspacesController } from "./state.js"
 import {
+  resolvePanelRowBg,
+  resolveSidebarHoverBg,
   resolveStatusColor,
   sameStringArray,
   statusGlyph,
@@ -345,11 +351,10 @@ export const WorkspacesPanel = (props: {
     const isRowHovered = () => hoveredPanelKey() === rowKey
     const isRowActive = () => isSelected() || isRowHovered()
     const rowBg = () =>
-      isSelected()
-        ? context.theme.background.raised.high
-        : isRowHovered()
-          ? context.theme.background.raised.base
-          : undefined
+      resolvePanelRowBg(context.theme, {
+        selected: isSelected(),
+        hovered: isRowHovered(),
+      })
 
     if (rowKey.startsWith("project:")) {
       const projRow = createMemo(() => {
@@ -390,8 +395,8 @@ export const WorkspacesPanel = (props: {
                 >
                   <text
                     fg={
-                      isSelected()
-                        ? context.theme.text.action.primary.base
+                      isRowActive()
+                        ? context.theme.text.action.primary.selected
                         : context.theme.text.muted
                     }
                     selectable={false}
@@ -418,7 +423,11 @@ export const WorkspacesPanel = (props: {
                   />
                 </box>
                 <text
-                  fg={context.theme.text.faint}
+                  fg={
+                    isRowActive()
+                      ? context.theme.text.muted
+                      : context.theme.text.faint
+                  }
                   selectable={false}
                   wrapMode="none"
                 >
@@ -444,6 +453,11 @@ export const WorkspacesPanel = (props: {
         <Show when={wtRow()}>
           {(row) => {
             const wt = () => row().worktree
+            const hiddenRollup = createMemo(() =>
+              rollupHiddenWorktreeStatus(wt(), wt().sessions),
+            )
+            const rowStatus = () => hiddenRollup().status
+            const rowStatusDetail = () => hiddenRollup().detail
             return (
               <box
                 ref={(el) => {
@@ -479,41 +493,57 @@ export const WorkspacesPanel = (props: {
                   overflow="hidden"
                 >
                   <text
-                    fg={context.theme.text.faint}
+                    fg={
+                      isRowActive()
+                        ? context.theme.text.muted
+                        : context.theme.text.faint
+                    }
                     selectable={false}
                     wrapMode="none"
                   >
                     {wt().quickSlot ? `${wt().quickSlot}` : " "}
                   </text>
                   <text
-                    fg={resolveStatusColor(
-                      context.theme,
-                      wt().status,
-                      wt().isCurrent,
-                    )}
+                    fg={
+                      isRowActive() && !wt().isCurrent && rowStatus() === "idle"
+                        ? context.theme.text.muted
+                        : resolveStatusColor(
+                            context.theme,
+                            rowStatus(),
+                            wt().isCurrent,
+                          )
+                    }
                     attributes={TextAttributes.BOLD}
                     selectable={false}
                     wrapMode="none"
                   >
-                    {worktreeGlyph(wt().status, wt().isCurrent)}
+                    {worktreeGlyph(rowStatus(), wt().isCurrent)}
                   </text>
                   <HoverMarqueeText
                     renderer={getRenderer}
                     text={wt().label}
                     active={isRowActive()}
-                    fg={context.theme.text.base}
-                    attributes={TextAttributes.BOLD}
+                    fg={
+                      wt().isCurrent || rowStatus() !== "idle" || isRowActive()
+                        ? context.theme.text.base
+                        : context.theme.text.muted
+                    }
+                    attributes={
+                      wt().isCurrent || isSelected()
+                        ? TextAttributes.BOLD
+                        : TextAttributes.NONE
+                    }
                     flexShrink={1}
                   />
                 </box>
 
                 <box flexDirection="row" columnGap={1} flexShrink={0}>
-                  <Show when={statusLabel(wt().status, wt().statusDetail)}>
+                  <Show when={statusLabel(rowStatus(), rowStatusDetail())}>
                     {(badge) => (
                       <text
                         fg={resolveStatusColor(
                           context.theme,
-                          wt().status,
+                          rowStatus(),
                           wt().isCurrent,
                         )}
                         selectable={false}
@@ -534,7 +564,11 @@ export const WorkspacesPanel = (props: {
                   </Show>
                   <Show when={wt().ahead > 0}>
                     <text
-                      fg={context.theme.text.faint}
+                      fg={
+                        isRowActive()
+                          ? context.theme.text.muted
+                          : context.theme.text.faint
+                      }
                       selectable={false}
                       wrapMode="none"
                     >
@@ -543,7 +577,11 @@ export const WorkspacesPanel = (props: {
                   </Show>
                   <Show when={wt().behind > 0}>
                     <text
-                      fg={context.theme.text.faint}
+                      fg={
+                        isRowActive()
+                          ? context.theme.text.muted
+                          : context.theme.text.faint
+                      }
                       selectable={false}
                       wrapMode="none"
                     >
@@ -604,18 +642,26 @@ export const WorkspacesPanel = (props: {
                 overflow="hidden"
               >
                 <text
-                  fg={context.theme.text.faint}
+                  fg={
+                    isRowActive()
+                      ? context.theme.text.muted
+                      : context.theme.text.faint
+                  }
                   selectable={false}
                   wrapMode="none"
                 >
                   {isLastSession() ? "└─" : "├─"}
                 </text>
                 <text
-                  fg={resolveStatusColor(
-                    context.theme,
-                    s().status,
-                    s().isCurrent,
-                  )}
+                  fg={
+                    isRowActive() && !s().isCurrent && s().status === "idle"
+                      ? context.theme.text.muted
+                      : resolveStatusColor(
+                          context.theme,
+                          s().status,
+                          s().isCurrent,
+                        )
+                  }
                   selectable={false}
                   wrapMode="none"
                 >
@@ -626,7 +672,7 @@ export const WorkspacesPanel = (props: {
                   text={s().title}
                   active={isRowActive()}
                   fg={
-                    s().isCurrent
+                    s().isCurrent || s().status !== "idle" || isRowActive()
                       ? context.theme.text.base
                       : context.theme.text.muted
                   }
@@ -651,7 +697,9 @@ export const WorkspacesPanel = (props: {
                             s().status,
                             s().isCurrent,
                           )
-                        : context.theme.text.faint
+                        : isRowActive()
+                          ? context.theme.text.muted
+                          : context.theme.text.faint
                     }
                     selectable={false}
                     wrapMode="none"
@@ -701,7 +749,7 @@ export const WorkspacesPanel = (props: {
           <box
             backgroundColor={
               panelNewSessionHovered()
-                ? context.theme.background.raised.base
+                ? resolveSidebarHoverBg(context.theme)
                 : undefined
             }
             onMouseOver={() => panelNewSessionHover.onEnter()}
@@ -721,7 +769,7 @@ export const WorkspacesPanel = (props: {
             <text
               fg={
                 panelNewSessionHovered()
-                  ? context.theme.text.action.primary.base
+                  ? context.theme.text.action.primary.selected
                   : context.theme.text.base
               }
               attributes={TextAttributes.BOLD}
@@ -783,7 +831,11 @@ export const WorkspacesPanel = (props: {
                 renderer={getRenderer}
                 text={path()}
                 active={hoveredFooterPath()}
-                fg={context.theme.text.muted}
+                fg={
+                  hoveredFooterPath()
+                    ? context.theme.text.base
+                    : context.theme.text.muted
+                }
                 flexShrink={1}
               />
             </box>

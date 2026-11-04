@@ -12,6 +12,7 @@ import {
   parseGitPorcelainBranchStatus,
   parseGitWorktreePorcelain,
   resolveWorkspaceNewSessionDirectory,
+  rollupHiddenWorktreeStatus,
 } from "../src/model.js"
 import { WorkspacesRpc } from "../src/rpc.js"
 
@@ -113,6 +114,49 @@ describe("status computation & matchSessionWorktree", () => {
         { status: "blocked", statusDetail: "form" },
       ]),
     ).toEqual({ status: "blocked", detail: "form" })
+  })
+
+  test("rollupHiddenWorktreeStatus omits status already visible on unfolded child sessions", () => {
+    const sessions = [
+      {
+        id: "s-ask",
+        projectID: "p1",
+        title: "Needs answer",
+        directory: "/code/repo",
+        status: "blocked" as const,
+        statusDetail: "form" as const,
+        isCurrent: true,
+        updatedAt: 20,
+      },
+      {
+        id: "s-busy",
+        projectID: "p1",
+        title: "Background build",
+        directory: "/code/repo",
+        status: "working" as const,
+        statusDetail: "running" as const,
+        isCurrent: false,
+        updatedAt: 10,
+      },
+    ]
+
+    // Folded (no child sessions rendered): rolls up full worktree status
+    expect(rollupHiddenWorktreeStatus({ sessions }, [])).toEqual({
+      status: "blocked",
+      detail: "form",
+    })
+
+    // Unfolded (all child sessions rendered): parent row stays idle so ! / ask is not duplicated
+    expect(rollupHiddenWorktreeStatus({ sessions }, sessions)).toEqual({
+      status: "idle",
+      detail: undefined,
+    })
+
+    // Partially surfaced: rolls up only the still-hidden session
+    expect(rollupHiddenWorktreeStatus({ sessions }, [sessions[0]!])).toEqual({
+      status: "working",
+      detail: "running",
+    })
   })
 
   test("picks longest matching worktree prefix", () => {

@@ -25,9 +25,7 @@ export function createHoverKeySignal(): HoverKeyController {
   let pendingClearKey = ""
 
   const onEnter = (key: string) => {
-    if (pendingClearKey === key) {
-      pendingClearKey = ""
-    }
+    pendingClearKey = ""
     if (hoveredKey() !== key) {
       setHoveredKey(key)
     }

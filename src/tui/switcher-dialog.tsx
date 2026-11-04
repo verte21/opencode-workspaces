@@ -10,6 +10,7 @@ import { For, Show, createEffect, createMemo, createSignal, onMount } from "soli
 import {
   dirBasename,
   filterWorkspaceTreeForSwitcher,
+  rollupHiddenWorktreeStatus,
   type AgentStatus,
   type SwitcherSelectableRow,
 } from "../model.js"
@@ -17,6 +18,7 @@ import { createHoverKeySignal } from "./hover.js"
 import { HoverMarqueeText } from "./marquee.js"
 import type { WorkspacesController } from "./state.js"
 import {
+  resolveDialogHoverBg,
   sameStringArray,
   statusGlyph,
   statusLabel,
@@ -387,7 +389,7 @@ export const WorkspaceSwitcherDialog = (props: {
       return dialogTheme.background.action.primary.focused
     }
     if (hoveredKey() === key) {
-      return dialogTheme.background.action.primary.hovered
+      return resolveDialogHoverBg(context.theme, dialogTheme)
     }
     return undefined
   }
@@ -527,6 +529,15 @@ export const WorkspaceSwitcherDialog = (props: {
                                 <Show when={wtGroupAccessor()}>
                                   {(wtGroup) => {
                                     const wt = () => wtGroup().worktree
+                                    const hiddenRollup = createMemo(() =>
+                                      rollupHiddenWorktreeStatus(
+                                        wt(),
+                                        wtGroup().sessions,
+                                      ),
+                                    )
+                                    const rowStatus = () => hiddenRollup().status
+                                    const rowStatusDetail = () =>
+                                      hiddenRollup().detail
                                     const isWtSelected = () =>
                                       selectedRow()?.key === wtKey
                                     const sessionIDs = createMemo(
@@ -583,7 +594,7 @@ export const WorkspaceSwitcherDialog = (props: {
                                                 isWtSelected()
                                                   ? focusedRowText
                                                   : dialogStatusColor(
-                                                      wt().status,
+                                                      rowStatus(),
                                                       wt().isCurrent,
                                                     )
                                               }
@@ -592,7 +603,7 @@ export const WorkspaceSwitcherDialog = (props: {
                                               wrapMode="none"
                                             >
                                               {worktreeGlyph(
-                                                wt().status,
+                                                rowStatus(),
                                                 wt().isCurrent,
                                               )}
                                             </text>
@@ -663,7 +674,7 @@ export const WorkspaceSwitcherDialog = (props: {
                                                   isWtSelected()
                                                     ? focusedRowText
                                                     : dialogTheme.text.action
-                                                        .primary.base
+                                                        .primary.selected
                                                 }
                                                 selectable={false}
                                                 wrapMode="none"
@@ -676,8 +687,8 @@ export const WorkspaceSwitcherDialog = (props: {
                                             </box>
                                             <Show
                                               when={statusLabel(
-                                                wt().status,
-                                                wt().statusDetail,
+                                                rowStatus(),
+                                                rowStatusDetail(),
                                               )}
                                             >
                                               {(badge) => (
@@ -686,7 +697,7 @@ export const WorkspaceSwitcherDialog = (props: {
                                                     isWtSelected()
                                                       ? focusedRowText
                                                       : dialogStatusColor(
-                                                          wt().status,
+                                                          rowStatus(),
                                                           wt().isCurrent,
                                                         )
                                                   }
@@ -852,7 +863,9 @@ export const WorkspaceSwitcherDialog = (props: {
                                                           isSessSelected()
                                                             ? focusedRowText
                                                             : session()
-                                                                  .isCurrent
+                                                                  .isCurrent ||
+                                                                hoveredKey() ===
+                                                                  sessKey
                                                               ? dialogTheme.text
                                                                   .base
                                                               : dialogTheme.text
@@ -951,7 +964,7 @@ export const WorkspaceSwitcherDialog = (props: {
           <text
             fg={
               hoveredFooterAction() === "worktree"
-                ? dialogTheme.text.action.primary.base
+                ? dialogTheme.text.action.primary.selected
                 : footerTheme.text.base
             }
             selectable={false}
@@ -972,7 +985,7 @@ export const WorkspaceSwitcherDialog = (props: {
           <text
             fg={
               hoveredFooterAction() === "session"
-                ? dialogTheme.text.action.primary.base
+                ? dialogTheme.text.action.primary.selected
                 : footerTheme.text.base
             }
             selectable={false}
@@ -993,7 +1006,7 @@ export const WorkspaceSwitcherDialog = (props: {
           <text
             fg={
               hoveredFooterAction() === "editor"
-                ? dialogTheme.text.action.primary.base
+                ? dialogTheme.text.action.primary.selected
                 : footerTheme.text.base
             }
             selectable={false}
@@ -1041,7 +1054,7 @@ export const WorkspaceSwitcherDialog = (props: {
           <text
             fg={
               hoveredFooterAction() === "all"
-                ? dialogTheme.text.action.primary.base
+                ? dialogTheme.text.action.primary.selected
                 : footerTheme.text.base
             }
             selectable={false}

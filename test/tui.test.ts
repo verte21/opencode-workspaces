@@ -821,4 +821,736 @@ describe("TuiPlugin UI & hot-reload integration", () => {
     if (cleanup) await cleanup()
     panelUi.renderer.destroy()
   })
+
+  test("highlights hovered worktree, session, header, and '+ New session' rows distinctly above raised sidebar and panel surfaces", async () => {
+    const { ensureRuntimePluginSupport } = await import(
+      "@opentui/solid/runtime-plugin-support/configure"
+    )
+    const { ensurePluginRuntime } = await import("@opencode/plugin/runtime")
+    const { testRender } = await import("@opentui/solid")
+    const { createStore, produce } = await import("solid-js/store")
+    const { migrateV1NewDesigns, resolveThemeDocument } = await import(
+      "@opencode/theme/tui"
+    )
+    const { isVisiblyDistinctOnSurface, resolveSidebarHoverBg } = await import(
+      "../src/tui/types.js"
+    )
+
+    const runtimeMods = ensurePluginRuntime()
+    ensureRuntimePluginSupport({
+      additional: Object.fromEntries(
+        Object.entries(runtimeMods).map(([k, loader]) => [
+          k,
+          (loader as () => any)(),
+        ]),
+      ) as Record<string, any>,
+    })
+
+    const { default: TuiPlugin } = await import("../src/tui.js")
+
+    const sampleV1 = {
+      theme: {
+        primary: "#7aa2f7",
+        secondary: "#bb9af7",
+        accent: "#ff9e64",
+        error: "#f7768e",
+        warning: "#e0af68",
+        success: "#9ece6a",
+        info: "#7dcfff",
+        text: "#c0caf5",
+        textMuted: "#565f89",
+        background: "#1a1b26",
+        backgroundPanel: "#16161e",
+        backgroundElement: "#292e42",
+        border: "#3b4261",
+        borderActive: "#7aa2f7",
+        borderSubtle: "#292e42",
+        diffAdded: "#9ece6a",
+        diffRemoved: "#f7768e",
+        diffContext: "#565f89",
+        diffHunkHeader: "#7aa2f7",
+        diffHighlightAdded: "#9ece6a",
+        diffHighlightRemoved: "#f7768e",
+        diffAddedBg: "#20303b",
+        diffRemovedBg: "#37222c",
+        diffContextBg: "#1a1b26",
+        diffLineNumber: "#565f89",
+        diffAddedLineNumberBg: "#20303b",
+        diffRemovedLineNumberBg: "#37222c",
+        markdownText: "#c0caf5",
+        markdownHeading: "#bb9af7",
+        markdownLink: "#7aa2f7",
+        markdownLinkText: "#7dcfff",
+        markdownCode: "#9ece6a",
+        markdownBlockQuote: "#e0af68",
+        markdownEmph: "#e0af68",
+        markdownStrong: "#ff9e64",
+        markdownHorizontalRule: "#565f89",
+        markdownListItem: "#2e7de9",
+        markdownListEnumeration: "#7dcfff",
+        markdownImage: "#7aa2f7",
+        markdownImageText: "#7dcfff",
+        markdownCodeBlock: "#c0caf5",
+        syntaxComment: "#565f89",
+        syntaxKeyword: "#bb9af7",
+        syntaxFunction: "#7aa2f7",
+        syntaxVariable: "#c0caf5",
+        syntaxString: "#9ece6a",
+        syntaxNumber: "#ff9e64",
+        syntaxType: "#2ac3de",
+        syntaxOperator: "#89ddff",
+        syntaxPunctuation: "#c0caf5",
+      },
+    }
+
+    const darkTheme = resolveThemeDocument(
+      migrateV1NewDesigns(sampleV1 as any),
+      "dark",
+    )
+    const transparentTheme = resolveThemeDocument(
+      migrateV1NewDesigns({
+        theme: {
+          ...sampleV1.theme,
+          background: "#00000000",
+          backgroundPanel: "#00000000",
+          backgroundElement: "#00000000",
+        },
+      } as any),
+      "dark",
+    )
+
+    // Transparent themes must still resolve an opaque hover highlight color
+    expect(
+      isVisiblyDistinctOnSurface(
+        resolveSidebarHoverBg(transparentTheme as any),
+        transparentTheme.background.raised.base,
+      ),
+    ).toBe(true)
+
+    const repoRoot = "/Users/dev/hover-repo"
+    const wtActiveDir = "/Users/dev/hover-repo/wt-active"
+    const slots: any[] = []
+
+    const [prefs, setPrefs] = createStore<any>({
+      pinnedProjects: [],
+      collapsedProjects: [],
+      expandedSidebarWorktrees: [wtActiveDir],
+      showAllGitProjects: false,
+      maxRecentProjects: 8,
+    })
+    const [cache, setCache] = createStore<any>({
+      worktreesByProject: { "proj-h": [wtActiveDir] },
+      gitWorktreesByRoot: {},
+      gitByDirectory: {
+        [repoRoot]: { branch: "main", dirtyCount: 2, ahead: 0, behind: 0 },
+        [wtActiveDir]: {
+          branch: "feat/selected",
+          dirtyCount: 0,
+          ahead: 1,
+          behind: 0,
+        },
+      },
+      lastSyncedAt: Date.now(),
+    })
+
+    const sessions = [
+      {
+        id: "sess-main",
+        projectID: "proj-h",
+        title: "Main Session",
+        time: { created: 1, updated: 3 },
+        location: { directory: repoRoot },
+      },
+      {
+        id: "sess-cur",
+        projectID: "proj-h",
+        title: "Current Session",
+        time: { created: 1, updated: 5 },
+        location: { directory: wtActiveDir },
+      },
+      {
+        id: "sess-bg",
+        projectID: "proj-h",
+        title: "Older Session",
+        time: { created: 1, updated: 2 },
+        location: { directory: wtActiveDir },
+      },
+    ]
+
+    const boot = await testRender(() => null as any, { width: 38, height: 30 })
+    const mockContext: any = {
+      options: {},
+      location: { directory: repoRoot },
+      app: { version: "2.2.5", channel: "latest" },
+      renderer: boot.renderer,
+      client: {
+        rpc: () => ({
+          inspectLocations: async () => ({
+            summaries: cache.gitByDirectory,
+            worktreesByRoot: {},
+          }),
+          events: { on: () => () => {} },
+        }),
+        worktree: {
+          refresh: async () => {},
+          list: async () => [{ directory: wtActiveDir }],
+        },
+        vcs: {
+          get: async () => ({ data: { branch: { current: "main" } } }),
+          status: async () => ({ data: [] }),
+        },
+        session: { create: async () => ({}), move: async () => {} },
+      },
+      data: {
+        on: () => () => {},
+        listen: () => () => {},
+        session: {
+          list: () => sessions,
+          get: (id: string) => sessions.find((s) => s.id === id),
+          root: (id: string) => id,
+          family: (id: string) => [id],
+          cost: () => 0,
+          status: () => "idle",
+          pending: { list: () => [], sync: async () => {}, invalidate: () => {} },
+          sync: async () => {},
+          invalidate: () => {},
+          message: {
+            list: () => [],
+            get: () => undefined,
+            sync: async () => {},
+            invalidate: () => {},
+          },
+          permission: { list: () => [], sync: async () => {}, invalidate: () => {} },
+          form: {
+            list: () => [],
+            sync: async () => {},
+            invalidate: () => {},
+            reply: async () => {},
+            cancel: async () => {},
+          },
+        },
+        project: {
+          list: () => [
+            {
+              id: "proj-h",
+              canonical: repoRoot,
+              vcs: "git",
+              name: "hover-repo",
+              sandboxes: [wtActiveDir],
+              time: { created: 1, updated: 5, active: 5 },
+            },
+          ],
+          get: () => undefined,
+          sync: async () => {},
+          invalidate: () => {},
+          permission: { list: () => [], sync: async () => {}, invalidate: () => {} },
+        },
+        shell: { list: () => [], get: () => undefined, sync: async () => {}, invalidate: () => {} },
+        location: {
+          default: () => ({ directory: repoRoot }),
+          sync: async () => {},
+          invalidate: () => {},
+          vcs: { info: () => undefined, sync: async () => {}, invalidate: () => {} },
+        },
+      },
+      theme: darkTheme,
+      themeMode: "dark",
+      keymap: { layer: () => {} },
+      storage: {
+        store: () => [prefs, async (m: any) => setPrefs(produce(m))],
+        memory: () => [cache, (m: any) => setCache(produce(m))],
+      },
+      ui: {
+        dialog: { show: () => {}, set: () => {}, clear: () => {} },
+        toast: { show: () => {} },
+        format: { path: (p: string) => p },
+        router: {
+          register: () => () => {},
+          navigate: () => {},
+          current: () => ({ type: "session", sessionID: "sess-cur" }),
+        },
+        panel: { open: () => true, close: () => {}, current: () => undefined },
+        tabs: {
+          enabled: () => true,
+          list: () => [],
+          open: () => true,
+          focus: () => true,
+          move: () => true,
+          close: () => true,
+        },
+        slot: (c: any) => {
+          slots.push(c)
+          return () => {}
+        },
+      },
+    }
+
+    const cleanup = await TuiPlugin.setup(mockContext)
+    boot.renderer.destroy()
+
+    const sidebarSurfaceBg = darkTheme.background.raised.base
+    const sidebarClaim = slots.find((s) => s.before === "sidebar.footer")
+    const sidebarUi = await testRender(
+      () => sidebarClaim.render({ sessionID: "sess-cur" }),
+      {
+        width: 36,
+        height: 30,
+        backgroundColor: sidebarSurfaceBg,
+      },
+    )
+    mockContext.renderer = sidebarUi.renderer
+    await sidebarUi.renderOnce()
+
+    const lines = sidebarUi.captureCharFrame().split("\n")
+    const headerIdx = lines.findIndex((l) => l.includes("Worktrees"))
+    const mainIdx = lines.findIndex((l) => l.includes("▸ main"))
+    const selectedWtIdx = lines.findIndex((l) => l.includes("▾ feat/selected"))
+    const olderSessIdx = lines.findIndex((l) => l.includes("Older Session"))
+    const newSessIdx = lines.findIndex((l) => l.includes("+ New session"))
+    const newSessBranchIdx = newSessIdx + 1
+
+    // Target workspace renders on its own indented newline underneath '+ New session'
+    expect(lines[newSessIdx]).not.toContain("feat/selected")
+    expect(lines[newSessBranchIdx]).toContain("  feat/selected")
+
+    const rowFirstBg = (ui: typeof sidebarUi, rowIdx: number) =>
+      ui.captureSpans().lines[rowIdx]!.spans[0]!.bg
+
+    // At rest, rows sit cleanly on the raised sidebar background
+    expect(
+      isVisiblyDistinctOnSurface(rowFirstBg(sidebarUi, mainIdx), sidebarSurfaceBg),
+    ).toBe(false)
+
+    // Hovering non-selected worktree row visibly highlights its background above raised.base
+    await sidebarUi.mockMouse.moveTo(6, mainIdx)
+    await sidebarUi.renderOnce()
+    expect(
+      isVisiblyDistinctOnSurface(rowFirstBg(sidebarUi, mainIdx), sidebarSurfaceBg),
+    ).toBe(true)
+
+    // Moving to the selected worktree row clears 'main' and visibly highlights 'feat/selected'
+    await sidebarUi.mockMouse.moveTo(6, selectedWtIdx)
+    await sidebarUi.renderOnce()
+    expect(
+      isVisiblyDistinctOnSurface(rowFirstBg(sidebarUi, mainIdx), sidebarSurfaceBg),
+    ).toBe(false)
+    expect(
+      isVisiblyDistinctOnSurface(
+        rowFirstBg(sidebarUi, selectedWtIdx),
+        sidebarSurfaceBg,
+      ),
+    ).toBe(true)
+
+    // Hovering nested session row highlights the session row
+    await sidebarUi.mockMouse.moveTo(8, olderSessIdx)
+    await sidebarUi.renderOnce()
+    expect(
+      isVisiblyDistinctOnSurface(
+        rowFirstBg(sidebarUi, olderSessIdx),
+        sidebarSurfaceBg,
+      ),
+    ).toBe(true)
+
+    // Hovering 'Worktrees' header and '+ New session' / workspace newline highlights both lines' bg and fg
+    await sidebarUi.mockMouse.moveTo(4, headerIdx)
+    await sidebarUi.renderOnce()
+    expect(
+      isVisiblyDistinctOnSurface(rowFirstBg(sidebarUi, headerIdx), sidebarSurfaceBg),
+    ).toBe(true)
+
+    const restNewSessFg = sidebarUi
+      .captureSpans()
+      .lines[newSessIdx]!.spans.find((s) => s.text.includes("+ New session"))!
+      .fg.toString()
+    const restBranchFg = sidebarUi
+      .captureSpans()
+      .lines[newSessBranchIdx]!.spans.find((s) =>
+        s.text.includes("feat/selected"),
+      )!
+      .fg.toString()
+
+    // Hover directly on the '<workspace>' second line -> both lines highlight together
+    await sidebarUi.mockMouse.moveTo(4, newSessBranchIdx)
+    await sidebarUi.renderOnce()
+    const hoveredNewSessSpan = sidebarUi
+      .captureSpans()
+      .lines[newSessIdx]!.spans.find((s) => s.text.includes("+ New session"))!
+    const hoveredBranchSpan = sidebarUi
+      .captureSpans()
+      .lines[newSessBranchIdx]!.spans.find((s) =>
+        s.text.includes("feat/selected"),
+      )!
+    expect(
+      isVisiblyDistinctOnSurface(hoveredNewSessSpan.bg, sidebarSurfaceBg),
+    ).toBe(true)
+    expect(
+      isVisiblyDistinctOnSurface(
+        rowFirstBg(sidebarUi, newSessBranchIdx),
+        sidebarSurfaceBg,
+      ),
+    ).toBe(true)
+    expect(
+      isVisiblyDistinctOnSurface(hoveredBranchSpan.bg, sidebarSurfaceBg),
+    ).toBe(true)
+    expect(hoveredNewSessSpan.fg.toString()).not.toBe(restNewSessFg)
+    expect(hoveredBranchSpan.fg.toString()).not.toBe(restBranchFg)
+
+    sidebarUi.renderer.destroy()
+
+    // Verify WorkspacesPanel (Ctrl+G) also highlights hovered rows distinctly from both raised.base and selected row
+    const panelClaim = slots.find((s) => s.append === "session.panel")
+    const panelUi = await testRender(
+      () =>
+        panelClaim.render({
+          name: "opencode-workspaces.panel",
+          sessionID: "sess-cur",
+          width: 40,
+          presentation: "panel",
+          focused: true,
+          focus: () => {},
+          close: () => {},
+          toggleFullscreen: () => {},
+        }),
+      {
+        width: 40,
+        height: 22,
+        backgroundColor: sidebarSurfaceBg,
+      },
+    )
+    mockContext.renderer = panelUi.renderer
+    await panelUi.renderOnce()
+
+    const panelLines = panelUi.captureCharFrame().split("\n")
+    const panelMainIdx = panelLines.findIndex((l) => l.includes("main"))
+    const panelCurSessIdx = panelLines.findIndex((l) =>
+      l.includes("Current Session"),
+    )
+
+    // Current Session is keyboard-selected; 'main' is unselected at rest
+    const selectedPanelBg = rowFirstBg(panelUi, panelCurSessIdx)
+    expect(isVisiblyDistinctOnSurface(selectedPanelBg, sidebarSurfaceBg)).toBe(
+      true,
+    )
+    expect(
+      isVisiblyDistinctOnSurface(
+        rowFirstBg(panelUi, panelMainIdx),
+        sidebarSurfaceBg,
+      ),
+    ).toBe(false)
+
+    // Hovering unselected 'main' row in panel highlights it distinctly above raised.base AND distinct from selected row
+    await panelUi.mockMouse.moveTo(6, panelMainIdx)
+    await panelUi.renderOnce()
+    const hoveredPanelBg = rowFirstBg(panelUi, panelMainIdx)
+    expect(isVisiblyDistinctOnSurface(hoveredPanelBg, sidebarSurfaceBg)).toBe(
+      true,
+    )
+    expect(hoveredPanelBg.toString()).not.toBe(selectedPanelBg.toString())
+
+    if (cleanup) await cleanup()
+    panelUi.renderer.destroy()
+  })
+
+  test("prints '!' and 'ask' only next to unfolded session rows without duplicating onto the parent worktree row", async () => {
+    const { ensureRuntimePluginSupport } = await import(
+      "@opentui/solid/runtime-plugin-support/configure"
+    )
+    const { ensurePluginRuntime } = await import("@opencode/plugin/runtime")
+    const { testRender } = await import("@opentui/solid")
+    const { createStore, produce } = await import("solid-js/store")
+
+    const runtimeMods = ensurePluginRuntime()
+    ensureRuntimePluginSupport({
+      additional: Object.fromEntries(
+        Object.entries(runtimeMods).map(([k, loader]) => [
+          k,
+          (loader as () => any)(),
+        ]),
+      ) as Record<string, any>,
+    })
+
+    const { default: TuiPlugin } = await import("../src/tui.js")
+
+    const makeThemeToken = (): any =>
+      new Proxy(
+        {},
+        {
+          get(_t, prop) {
+            if (prop === Symbol.toPrimitive) return () => "#ffffff"
+            if (
+              prop === "base" ||
+              prop === "muted" ||
+              prop === "faint" ||
+              prop === "selected" ||
+              prop === "focused" ||
+              prop === "hovered" ||
+              prop === "disabled" ||
+              prop === "low" ||
+              prop === "high" ||
+              prop === "max" ||
+              typeof prop === "number" ||
+              /^\d+$/.test(String(prop))
+            ) {
+              return "#aabbcc"
+            }
+            if (prop === "surface") return () => makeThemeToken()
+            return makeThemeToken()
+          },
+        },
+      )
+
+    const repoRoot = "/Users/dev/repo-ask"
+    const wtAskDir = "/Users/dev/repo-ask/wt-ask"
+    const slots: any[] = []
+
+    const projects = [
+      {
+        id: "proj-ask",
+        canonical: repoRoot,
+        vcs: "git",
+        name: "repo-ask",
+        sandboxes: [wtAskDir],
+        time: { created: 1, updated: 10, active: 10 },
+      },
+    ]
+
+    const sessions = [
+      {
+        id: "sess-cur-ask",
+        projectID: "proj-ask",
+        title: "Asking Session",
+        time: { created: 1, updated: 10 },
+        location: { directory: wtAskDir },
+      },
+      {
+        id: "sess-bg-ask",
+        projectID: "proj-ask",
+        title: "Bg Ask Session",
+        time: { created: 1, updated: 8 },
+        location: { directory: repoRoot },
+      },
+    ]
+
+    const [prefs, setPrefs] = createStore<any>({
+      pinnedProjects: [],
+      collapsedProjects: [],
+      expandedSidebarWorktrees: [],
+      showAllGitProjects: false,
+      maxRecentProjects: 8,
+    })
+    const [cache, setCache] = createStore<any>({
+      worktreesByProject: { "proj-ask": [wtAskDir] },
+      gitWorktreesByRoot: {
+        [repoRoot]: [
+          { directory: repoRoot, branch: "main" },
+          { directory: wtAskDir, branch: "feat/dialog" },
+        ],
+      },
+      gitByDirectory: {
+        [repoRoot]: { branch: "main", dirtyCount: 0, ahead: 0, behind: 0 },
+        [wtAskDir]: {
+          branch: "feat/dialog",
+          dirtyCount: 0,
+          ahead: 0,
+          behind: 0,
+        },
+      },
+      lastSyncedAt: Date.now(),
+    })
+
+    const boot = await testRender(() => null as any, { width: 38, height: 28 })
+
+    const mockContext: any = {
+      options: {},
+      location: { directory: wtAskDir },
+      app: { version: "2.2.5", channel: "latest" },
+      renderer: boot.renderer,
+      client: {
+        rpc: () => ({
+          inspectLocations: async () => ({
+            summaries: cache.gitByDirectory,
+            worktreesByRoot: cache.gitWorktreesByRoot,
+          }),
+          events: { on: () => () => {} },
+        }),
+        worktree: {
+          refresh: async () => {},
+          list: async () => [{ directory: wtAskDir }],
+        },
+        vcs: {
+          get: async () => ({ data: { branch: { current: "feat/dialog" } } }),
+          status: async () => ({ data: [] }),
+        },
+        session: {
+          create: async ({ location }: any) => ({
+            id: "sess-new",
+            projectID: "proj-ask",
+            location,
+          }),
+          move: async () => {},
+        },
+      },
+      data: {
+        on: () => () => {},
+        listen: () => () => {},
+        session: {
+          list: () => sessions,
+          get: (id: string) => sessions.find((s) => s.id === id),
+          root: (id: string) => id,
+          family: (id: string) => [id],
+          cost: () => 0,
+          status: () => "idle",
+          pending: { list: () => [], sync: async () => {}, invalidate: () => {} },
+          sync: async () => {},
+          invalidate: () => {},
+          message: {
+            list: () => [],
+            get: () => undefined,
+            sync: async () => {},
+            invalidate: () => {},
+          },
+          permission: { list: () => [], sync: async () => {}, invalidate: () => {} },
+          form: {
+            // Both sessions are waiting on user questions ('ask')
+            list: (id: string) =>
+              id === "sess-cur-ask" || id === "sess-bg-ask" ? [{ id: `f-${id}` }] : [],
+            sync: async () => {},
+            invalidate: () => {},
+            reply: async () => {},
+            cancel: async () => {},
+          },
+        },
+        project: {
+          list: () => projects,
+          get: (id: string) => projects.find((p) => p.id === id),
+          sync: async () => {},
+          invalidate: () => {},
+          permission: { list: () => [], sync: async () => {}, invalidate: () => {} },
+        },
+        shell: { list: () => [], get: () => undefined, sync: async () => {}, invalidate: () => {} },
+        location: {
+          default: () => ({ directory: wtAskDir }),
+          sync: async () => {},
+          invalidate: () => {},
+          vcs: { info: () => undefined, sync: async () => {}, invalidate: () => {} },
+        },
+      },
+      theme: makeThemeToken(),
+      themeMode: "dark",
+      keymap: { layer: (fn: any) => fn() },
+      storage: {
+        store: () => [prefs, async (mut: any) => setPrefs(produce(mut))],
+        memory: () => [cache, (mut: any) => setCache(produce(mut))],
+      },
+      ui: {
+        dialog: { show: () => {}, set: () => {}, clear: () => {} },
+        toast: { show: () => {} },
+        format: { path: (p: string) => p },
+        router: {
+          register: () => () => {},
+          navigate: () => {},
+          current: () => ({ type: "session", sessionID: "sess-cur-ask" }),
+        },
+        panel: { open: () => true, close: () => {}, current: () => undefined },
+        tabs: {
+          enabled: () => true,
+          list: () => [],
+          open: () => true,
+          focus: () => true,
+          move: () => true,
+          close: () => true,
+        },
+        slot: (claim: any) => {
+          slots.push(claim)
+          return () => {}
+        },
+      },
+    }
+
+    const cleanup = await TuiPlugin.setup(mockContext)
+    await new Promise((r) => setTimeout(r, 80))
+    boot.renderer.destroy()
+
+    const sidebarClaim = slots.find((s) => s.before === "sidebar.footer")
+    const sidebarUi = await testRender(
+      () => sidebarClaim.render({ sessionID: "sess-cur-ask" }),
+      { width: 38, height: 28 },
+    )
+    mockContext.renderer = sidebarUi.renderer
+    await sidebarUi.renderOnce()
+
+    // Initially:
+    // - 'feat/dialog' is folded with no child rows visible -> 'ask' rolls up onto 'feat/dialog'
+    // - 'main' auto-surfaces 'Bg Ask Session' below -> 'ask' & '!' appear ONLY on 'Bg Ask Session', NOT on 'main'
+    const foldedLines = sidebarUi.captureCharFrame().split("\n")
+    const foldedFeatLine = foldedLines.find((l) => l.includes("▸ feat/dialog"))!
+    const foldedMainLine = foldedLines.find((l) => l.includes("▸ main"))!
+    const surfacedBgSessLine = foldedLines.find((l) =>
+      l.includes("Bg Ask Session"),
+    )!
+    expect(foldedFeatLine).toMatch(/\bask\b/)
+    expect(foldedMainLine).not.toMatch(/\bask\b/)
+    expect(surfacedBgSessLine).toContain("! Bg Ask Session")
+    expect(surfacedBgSessLine).toMatch(/\bask\b/)
+
+    // Unfold 'feat/dialog' -> '!' and 'ask' move exclusively to 'Asking Session' (never 2x 'ask')
+    const featIdx = foldedLines.findIndex((l) => l.includes("▸ feat/dialog"))
+    await sidebarUi.mockMouse.click(6, featIdx)
+    await sidebarUi.renderOnce()
+
+    const unfoldedLines = sidebarUi.captureCharFrame().split("\n")
+    const unfoldedFeatLine = unfoldedLines.find((l) =>
+      l.includes("▾ feat/dialog"),
+    )!
+    const unfoldedAskSessLine = unfoldedLines.find((l) =>
+      l.includes("Asking Session"),
+    )!
+    expect(unfoldedFeatLine).not.toContain("!")
+    expect(unfoldedFeatLine).not.toMatch(/\bask\b/)
+    expect(unfoldedAskSessLine).toContain("└─ ! Asking Session")
+    expect(unfoldedAskSessLine).toMatch(/\bask\b/)
+
+    sidebarUi.renderer.destroy()
+
+    // WorkspacesPanel (Ctrl+G): unfolded worktree rows show '▸'/'○' without '!' or 'ask'; session rows show '!' + 'ask'
+    const panelClaim = slots.find((s) => s.append === "session.panel")
+    const panelUi = await testRender(
+      () =>
+        panelClaim.render({
+          name: "opencode-workspaces.panel",
+          sessionID: "sess-cur-ask",
+          width: 44,
+          presentation: "panel",
+          focused: true,
+          focus: () => {},
+          close: () => {},
+          toggleFullscreen: () => {},
+        }),
+      { width: 44, height: 24 },
+    )
+    mockContext.renderer = panelUi.renderer
+    await panelUi.renderOnce()
+
+    const panelLines = panelUi.captureCharFrame().split("\n")
+    const panelMainWtLine = panelLines.find((l) => l.includes("○ main"))!
+    const panelFeatWtLine = panelLines.find((l) => l.includes("▸ feat/dialog"))!
+    const panelBgSessLine = panelLines.find((l) =>
+      l.includes("Bg Ask Session"),
+    )!
+    const panelCurSessLine = panelLines.find((l) =>
+      l.includes("Asking Session"),
+    )!
+
+    expect(panelMainWtLine).toBeDefined()
+    expect(panelFeatWtLine).toBeDefined()
+    expect(panelMainWtLine).not.toMatch(/\bask\b/)
+    expect(panelFeatWtLine).not.toMatch(/\bask\b/)
+    expect(panelBgSessLine).toContain("! Bg Ask Session")
+    expect(panelBgSessLine).toMatch(/\bask\b/)
+    expect(panelCurSessLine).toContain("! Asking Session")
+    expect(panelCurSessLine).toMatch(/\bask\b/)
+
+    if (cleanup) await cleanup()
+    panelUi.renderer.destroy()
+  })
 })
